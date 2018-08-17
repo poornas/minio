@@ -267,7 +267,7 @@ func (atb *adminXLTestBed) GenerateHealTestData(t *testing.T) {
 		t.Fatalf("Failed to make bucket %s - %v", bucketName,
 			err)
 	}
-
+	opts := ObjectOptions{}
 	// create some objects
 	{
 		objName := "myobject"
@@ -275,7 +275,7 @@ func (atb *adminXLTestBed) GenerateHealTestData(t *testing.T) {
 			objectName := fmt.Sprintf("%s-%d", objName, i)
 			_, err = atb.objLayer.PutObject(context.Background(), bucketName, objectName,
 				mustGetHashReader(t, bytes.NewReader([]byte("hello")),
-					int64(len("hello")), "", ""), nil)
+					int64(len("hello")), "", ""), nil, opts)
 			if err != nil {
 				t.Fatalf("Failed to create %s - %v", objectName,
 					err)
@@ -287,14 +287,14 @@ func (atb *adminXLTestBed) GenerateHealTestData(t *testing.T) {
 	{
 		objName := "mpObject"
 		uploadID, err := atb.objLayer.NewMultipartUpload(context.Background(), bucketName,
-			objName, nil)
+			objName, nil, opts)
 		if err != nil {
 			t.Fatalf("mp new error: %v", err)
 		}
 
 		_, err = atb.objLayer.PutObjectPart(context.Background(), bucketName, objName,
 			uploadID, 3, mustGetHashReader(t, bytes.NewReader(
-				[]byte("hello")), int64(len("hello")), "", ""))
+				[]byte("hello")), int64(len("hello")), "", ""), opts)
 		if err != nil {
 			t.Fatalf("mp put error: %v", err)
 		}

@@ -285,7 +285,7 @@ func (cfs *cacheFSObjects) Put(ctx context.Context, bucket, object string, data 
 
 // Returns the handle for the cached object
 func (cfs *cacheFSObjects) Get(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string) (err error) {
-	return cfs.GetObject(ctx, bucket, object, startOffset, length, writer, etag)
+	return cfs.GetObject(ctx, bucket, object, startOffset, length, writer, etag, ObjectOptions{})
 }
 
 // Deletes the cached object
@@ -295,7 +295,7 @@ func (cfs *cacheFSObjects) Delete(ctx context.Context, bucket, object string) (e
 
 // convenience function to check if object is cached on this cacheFSObjects
 func (cfs *cacheFSObjects) Exists(ctx context.Context, bucket, object string) bool {
-	_, err := cfs.GetObjectInfo(ctx, bucket, object)
+	_, err := cfs.GetObjectInfo(ctx, bucket, object, ObjectOptions{})
 	return err == nil
 }
 
@@ -438,7 +438,7 @@ func (cfs *cacheFSObjects) PutObject(ctx context.Context, bucket string, object 
 // Implements S3 compatible initiate multipart API. Operation here is identical
 // to fs backend implementation - with the exception that cache FS uses the uploadID
 // generated on the backend
-func (cfs *cacheFSObjects) NewMultipartUpload(ctx context.Context, bucket, object string, meta map[string]string, uploadID string) (string, error) {
+func (cfs *cacheFSObjects) NewMultipartUpload(ctx context.Context, bucket, object string, meta map[string]string, uploadID string, opts ObjectOptions) (string, error) {
 	if cfs.diskUsageHigh() {
 		select {
 		case cfs.purgeChan <- struct{}{}:

@@ -77,7 +77,7 @@ func testAPIHeadObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -224,7 +224,7 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -752,7 +752,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 				t.Errorf("Test %d: %s: Object content differs from expected value.: %s", i+1, instanceType, string(actualContent))
 				continue
 			}
-			objInfo, err := obj.GetObjectInfo(context.Background(), testCase.bucketName, testCase.objectName)
+			objInfo, err := obj.GetObjectInfo(context.Background(), testCase.bucketName, testCase.objectName, ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to fetch the copied object: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -764,7 +764,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 				t.Fatalf("Test %d: %s: ContentEncoding is set to \"%s\" which is unexpected, expected \"%s\"", i+1, instanceType, objInfo.ContentEncoding, expectedContentEncoding)
 			}
 			buffer := new(bytes.Buffer)
-			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(testCase.dataLen), buffer, objInfo.ETag)
+			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(testCase.dataLen), buffer, objInfo.ETag, ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to fetch the copied object: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -936,7 +936,7 @@ func testAPIPutObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			buffer := new(bytes.Buffer)
 
 			// Fetch the object to check whether the content is same as the one uploaded via PutObject.
-			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(len(bytesData)), buffer, "")
+			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(len(bytesData)), buffer, "", ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to fetch the copied object: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -979,7 +979,7 @@ func testAPIPutObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 		if testCase.expectedRespStatus == http.StatusOK {
 			buffer := new(bytes.Buffer)
 			// Fetch the object to check whether the content is same as the one uploaded via PutObject.
-			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(len(bytesData)), buffer, "")
+			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.objectName, 0, int64(len(bytesData)), buffer, "", ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to fetch the copied object: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -1034,6 +1034,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	credentials auth.Credentials, t *testing.T) {
 
 	objectName := "test-object"
+	opts := ObjectOptions{}
 	var err error
 
 	// set of byte data for PutObject.
@@ -1060,7 +1061,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	for i, input := range putObjectInputs {
 		// uploading the object.
 		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName,
-			mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+			mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -1073,7 +1074,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -1127,7 +1128,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	}
 
 	var buf bytes.Buffer
-	if err = obj.GetObject(context.Background(), bucketName, testObject, 0, int64(len(bytesData[0].byteData)), &buf, ""); err != nil {
+	if err = obj.GetObject(context.Background(), bucketName, testObject, 0, int64(len(bytesData[0].byteData)), &buf, "", opts); err != nil {
 		t.Fatalf("Test: %s reading completed file failed: <ERROR> %v", instanceType, err)
 	}
 	if !bytes.Equal(buf.Bytes(), bytesData[0].byteData) {
@@ -1145,6 +1146,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 	credentials auth.Credentials, t *testing.T) {
 
 	objectName := "test-object"
+	opts := ObjectOptions{}
 	var err error
 
 	// set of byte data for PutObject.
@@ -1170,7 +1172,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -1183,7 +1185,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -1507,7 +1509,7 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -1776,7 +1778,7 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 		if rec.Code == http.StatusOK {
 			// See if the new object is formed.
 			// testing whether the copy was successful.
-			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.newObjectName, 0, int64(len(bytesData[0].byteData)), buffers[0], "")
+			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.newObjectName, 0, int64(len(bytesData[0].byteData)), buffers[0], "", ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to fetch the copied object: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -2102,7 +2104,7 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 
 	for i := 0; i < 2; i++ {
 		// initiate new multipart uploadID.
-		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil)
+		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil, ObjectOptions{})
 		if err != nil {
 			// Failed to create NewMultipartUpload, abort.
 			t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -2144,7 +2146,7 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 	// Iterating over creatPartCases to generate multipart chunks.
 	for _, part := range parts {
 		_, err = obj.PutObjectPart(context.Background(), part.bucketName, part.objName, part.uploadID, part.PartID,
-			mustGetHashReader(t, bytes.NewBufferString(part.inputReaderData), part.intputDataSize, part.inputMd5, ""))
+			mustGetHashReader(t, bytes.NewBufferString(part.inputReaderData), part.intputDataSize, part.inputMd5, ""), ObjectOptions{})
 		if err != nil {
 			t.Fatalf("%s : %s", instanceType, err)
 		}
@@ -2451,7 +2453,7 @@ func testAPIAbortMultipartHandler(obj ObjectLayer, instanceType, bucketName stri
 
 	for i := 0; i < 2; i++ {
 		// initiate new multipart uploadID.
-		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil)
+		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil, ObjectOptions{})
 		if err != nil {
 			// Failed to create NewMultipartUpload, abort.
 			t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -2493,7 +2495,7 @@ func testAPIAbortMultipartHandler(obj ObjectLayer, instanceType, bucketName stri
 	// Iterating over createPartCases to generate multipart chunks.
 	for _, part := range parts {
 		_, err = obj.PutObjectPart(context.Background(), part.bucketName, part.objName, part.uploadID, part.PartID,
-			mustGetHashReader(t, bytes.NewBufferString(part.inputReaderData), part.intputDataSize, part.inputMd5, ""))
+			mustGetHashReader(t, bytes.NewBufferString(part.inputReaderData), part.intputDataSize, part.inputMd5, ""), ObjectOptions{})
 		if err != nil {
 			t.Fatalf("%s : %s", instanceType, err)
 		}
@@ -2631,7 +2633,7 @@ func testAPIDeleteObjectHandler(obj ObjectLayer, instanceType, bucketName string
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData)
+		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetHashReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -2925,7 +2927,7 @@ func testAPIPutObjectPartHandler(obj ObjectLayer, instanceType, bucketName strin
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, ObjectOptions{})
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -3328,7 +3330,7 @@ func testAPIListObjectPartsHandler(obj ObjectLayer, instanceType, bucketName str
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, ObjectOptions{})
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -3337,7 +3339,7 @@ func testAPIListObjectPartsHandler(obj ObjectLayer, instanceType, bucketName str
 	uploadIDCopy := uploadID
 
 	// create an object Part, will be used to test list object parts.
-	_, err = obj.PutObjectPart(context.Background(), bucketName, testObject, uploadID, 1, mustGetHashReader(t, bytes.NewReader([]byte("hello")), int64(len("hello")), "5d41402abc4b2a76b9719d911017c592", ""))
+	_, err = obj.PutObjectPart(context.Background(), bucketName, testObject, uploadID, 1, mustGetHashReader(t, bytes.NewReader([]byte("hello")), int64(len("hello")), "5d41402abc4b2a76b9719d911017c592", ""), ObjectOptions{})
 	if err != nil {
 		t.Fatalf("Minio %s : %s.", instanceType, err)
 	}

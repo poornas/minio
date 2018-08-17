@@ -41,9 +41,9 @@ import (
 // 6. Make changes in config-current_test.go for any test change
 
 // Config version
-const serverConfigVersion = "28"
+const serverConfigVersion = "29"
 
-type serverConfig = serverConfigV28
+type serverConfig = serverConfigV29
 
 var (
 	// globalServerConfig server config.
@@ -291,6 +291,8 @@ func (s *serverConfig) ConfigDiff(t *serverConfig) string {
 		return "Logger configuration differs"
 	case !reflect.DeepEqual(s.KMS, t.KMS):
 		return "KMS configuration differs"
+	case !reflect.DeepEqual(s.SSE, t.SSE):
+		return "SSE configuration differs"
 	case reflect.DeepEqual(s, t):
 		return ""
 	default:
@@ -320,6 +322,7 @@ func newServerConfig() *serverConfig {
 			MaxUse:  globalCacheMaxUse,
 		},
 		KMS:    crypto.KMSConfig{},
+		SSE:    []string{},
 		Notify: notifier{},
 	}
 

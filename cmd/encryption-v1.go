@@ -21,13 +21,16 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"strconv"
 
+	"github.com/minio/minio-go/pkg/encrypt"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/ioutil"
@@ -481,7 +484,7 @@ func DecryptAllBlocksCopyRequest(client io.Writer, r *http.Request, bucket, obje
 func DecryptBlocksRequest(client io.Writer, r *http.Request, bucket, object string, startOffset, length int64, objInfo ObjectInfo, copySource bool) (io.WriteCloser, int64, int64, error) {
 	var seqNumber uint32
 	var encStartOffset, encLength int64
-
+	fmt.Println(" # of parts........", len(objInfo.Parts))
 	if len(objInfo.Parts) == 0 || !crypto.IsMultiPart(objInfo.UserDefined) {
 		seqNumber, encStartOffset, encLength = getEncryptedSinglePartOffsetLength(startOffset, length, objInfo)
 
@@ -509,7 +512,7 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, bucket, object stri
 		}
 
 		partStartIndex = i
-
+		fmt.Println(":part :", i, "startindex: ", partStartIndex, " decsize:: ", decryptedSize)
 		// Offset is smaller than size we have reached the
 		// proper part offset, break out we start from
 		// this part index.
@@ -644,6 +647,7 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 	if !crypto.IsEncrypted(o.UserDefined) {
 		return 0, errors.New("Cannot compute decrypted size of an unencrypted object")
 	}
+	fmt.Println("parts count..", o.Parts)
 	if len(o.Parts) == 0 || !crypto.IsMultiPart(o.UserDefined) {
 		size, err := sio.DecryptedSize(uint64(o.Size))
 		if err != nil {
@@ -655,6 +659,7 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 	var size int64
 	for _, part := range o.Parts {
 		partSize, err := sio.DecryptedSize(uint64(part.Size))
+		fmt.Println("part size...", partSize, err, part)
 		if err != nil {
 			return 0, errObjectTampered
 		}
@@ -723,6 +728,7 @@ func DecryptObjectInfo(info *ObjectInfo, headers http.Header) (apiErr APIErrorCo
 		apiErr = ErrInvalidEncryptionParameters
 		return
 	}
+
 	if apiErr, encrypted = ErrNone, crypto.IsEncrypted(info.UserDefined); !encrypted && crypto.SSEC.IsRequested(headers) {
 		apiErr = ErrInvalidEncryptionParameters
 	} else if encrypted {
@@ -735,6 +741,94 @@ func DecryptObjectInfo(info *ObjectInfo, headers http.Header) (apiErr APIErrorCo
 		if info.Size, err = info.DecryptedSize(); err != nil {
 			apiErr = toAPIErrorCode(err)
 		}
+		fmt.Println("info size for decryt.....", info.Size)
 	}
 	return
+}
+
+// derive client key from header for the
+func deriveClientKey(header http.Header, headerName, bucket, object string) ([32]byte, error) {
+	var key [32]byte
+	clientKey, err := base64.StdEncoding.DecodeString(header.Get(headerName))
+	if err != nil || len(clientKey) != 32 { // The client key must be 256 bits long
+		return key, crypto.ErrInvalidCustomerKey
+	}
+	mac := hmac.New(sha256.New, clientKey)
+	mac.Write([]byte(crypto.SSEC.String()))
+	mac.Write([]byte(path.Join(bucket, object)))
+	mac.Sum(key[:0])
+	return key, nil
+}
+
+func getEncryptionOpts(r *http.Request, bucket, object string) (ObjectOptions, error) {
+	var (
+		encryption encrypt.ServerSide
+		opts       ObjectOptions
+	)
+	if globalGatewaySSE != nil {
+		for _, k := range globalGatewaySSE {
+			if k == GW_SSE_C && crypto.SSEC.IsRequested(r.Header) {
+				derivedKey, err := deriveClientKey(r.Header, crypto.SSECKey, bucket, object)
+				if err != nil {
+					return opts, err
+				}
+				encryption, err = encrypt.NewSSEC(derivedKey[:])
+				if err != nil {
+					return opts, err
+				}
+				opts = ObjectOptions{ServerSideEncryption: encryption}
+			}
+		}
+	}
+	return opts, nil
+}
+
+func putEncryptionOpts(r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
+	if globalGatewaySSE != nil {
+		for _, k := range globalGatewaySSE {
+			if k == GW_SSE_S3 && crypto.S3.IsRequested(r.Header) {
+				opts = ObjectOptions{ServerSideEncryption: encrypt.ServerSide(encrypt.NewSSE())}
+			}
+			if k == GW_SSE_C && crypto.SSEC.IsRequested(r.Header) {
+				return getEncryptionOpts(r, bucket, object)
+			}
+		}
+	}
+	return
+}
+
+func copyDstEncryptionOpts(r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
+	if globalGatewaySSE != nil {
+		for _, k := range globalGatewaySSE {
+			if k == GW_SSE_S3 && crypto.S3.IsRequested(r.Header) {
+				opts = ObjectOptions{ServerSideEncryption: encrypt.ServerSide(encrypt.NewSSE())}
+			}
+			if k == GW_SSE_C && crypto.SSEC.IsRequested(r.Header) {
+				return getEncryptionOpts(r, bucket, object)
+			}
+		}
+	}
+	return
+}
+func copySrcEncryptionOpts(r *http.Request, bucket, object string) (ObjectOptions, error) {
+	var (
+		ssec encrypt.ServerSide
+		opts ObjectOptions
+	)
+	if globalGatewaySSE != nil {
+		for _, k := range globalGatewaySSE {
+			if k == GW_SSE_C && crypto.SSECopy.IsRequested(r.Header) {
+				derivedKey, err := deriveClientKey(r.Header, crypto.SSECopyKey, bucket, object)
+				if err != nil {
+					return opts, err
+				}
+				ssec, err = encrypt.NewSSEC(derivedKey[:])
+				if err != nil {
+					return opts, err
+				}
+				opts = ObjectOptions{ServerSideEncryption: encrypt.SSECopy(ssec)}
+			}
+		}
+	}
+	return opts, nil
 }

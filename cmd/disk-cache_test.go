@@ -193,6 +193,8 @@ func TestDiskCache(t *testing.T) {
 	objInfo.ETag = etag
 	objInfo.UserDefined = httpMeta
 
+	opts := ObjectOptions{}
+
 	byteReader := bytes.NewReader([]byte(content))
 	hashReader, err := hash.NewReader(byteReader, int64(size), "", "")
 	if err != nil {
@@ -202,7 +204,7 @@ func TestDiskCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cachedObjInfo, err := cache.GetObjectInfo(ctx, bucketName, objectName)
+	cachedObjInfo, err := cache.GetObjectInfo(ctx, bucketName, objectName, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +228,7 @@ func TestDiskCache(t *testing.T) {
 	if ccontent := writer.Bytes(); !bytes.Equal([]byte(content), ccontent) {
 		t.Errorf("wrong cached file content")
 	}
-	err = cache.Delete(ctx, bucketName, objectName)
+	err = cache.Delete(ctx, bucketName, objectName, opts)
 	if err != nil {
 		t.Errorf("object missing from cache")
 	}
@@ -267,6 +269,7 @@ func TestDiskCacheMaxUse(t *testing.T) {
 	objInfo.ETag = etag
 	objInfo.UserDefined = httpMeta
 
+	opts := ObjectOptions{}
 	byteReader := bytes.NewReader([]byte(content))
 	hashReader, err := hash.NewReader(byteReader, int64(size), "", "")
 	if err != nil {
@@ -282,7 +285,7 @@ func TestDiskCacheMaxUse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cachedObjInfo, err := cache.GetObjectInfo(ctx, bucketName, objectName)
+		cachedObjInfo, err := cache.GetObjectInfo(ctx, bucketName, objectName, opts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -306,7 +309,7 @@ func TestDiskCacheMaxUse(t *testing.T) {
 		if ccontent := writer.Bytes(); !bytes.Equal([]byte(content), ccontent) {
 			t.Errorf("wrong cached file content")
 		}
-		err = cache.Delete(ctx, bucketName, objectName)
+		err = cache.Delete(ctx, bucketName, objectName, opts)
 		if err != nil {
 			t.Errorf("object missing from cache")
 		}

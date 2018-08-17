@@ -302,3 +302,14 @@ type byBucketName []BucketInfo
 func (d byBucketName) Len() int           { return len(d) }
 func (d byBucketName) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
 func (d byBucketName) Less(i, j int) bool { return d[i].Name < d[j].Name }
+
+func cleanMinioInternalMetadataKeys(metadata map[string]string) map[string]string {
+	var newMeta = make(map[string]string)
+	for k, v := range metadata {
+		if strings.HasPrefix(k, "X-Amz-Meta-X-Minio-Internal-") {
+			newMeta[strings.TrimPrefix(k, "X-Amz-Meta-")] = v
+		}
+	}
+	fmt.Println(newMeta, "::::")
+	return newMeta
+}

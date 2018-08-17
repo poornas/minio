@@ -217,6 +217,11 @@ func migrateConfig() error {
 			return err
 		}
 		fallthrough
+	case "28":
+		if err = migrateV28ToV29(); err != nil {
+			return err
+		}
+		fallthrough
 	case serverConfigVersion:
 		// No migration needed. this always points to current version.
 		err = nil
@@ -2404,5 +2409,31 @@ func migrateV27ToV28() error {
 	}
 
 	logger.Info(configMigrateMSGTemplate, configFile, "27", "28")
+	return nil
+}
+
+func migrateV28ToV29() error {
+	configFile := getConfigFile()
+
+	// config V29 is backward compatible with V28, load the old
+	// config file in serverConfigV29 struct and initialize gateway SSE
+	srvConfig := &serverConfigV29{}
+	_, err := quick.LoadConfig(configFile, globalEtcdClient, srvConfig)
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("Unable to load config file. %v", err)
+	}
+	if srvConfig.Version != "28" {
+		return nil
+	}
+
+	srvConfig.Version = "29"
+	srvConfig.SSE = globalGatewaySSE
+	fmt.Println("globalgwsse..", globalGatewaySSE)
+	if err = quick.SaveConfig(srvConfig, configFile, globalEtcdClient); err != nil {
+		return fmt.Errorf("Failed to migrate config from ‘28’ to ‘29’. %v", err)
+	}
+	logger.Info(configMigrateMSGTemplate, configFile, "28", "29")
 	return nil
 }

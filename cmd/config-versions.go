@@ -756,3 +756,39 @@ type serverConfigV28 struct {
 	// Logger configuration
 	Logger loggerConfig `json:"logger"`
 }
+
+// serverConfigV29 is just like version '28', additionally
+// storing SSE config for gateway
+//
+// IMPORTANT NOTE: When updating this struct make sure that
+// serverConfig.ConfigDiff() is updated as necessary.
+type serverConfigV29 struct {
+	quick.Config `json:"-"` // ignore interfaces
+
+	Version string `json:"version"`
+
+	// S3 API configuration.
+	Credential auth.Credentials `json:"credential"`
+	Region     string           `json:"region"`
+	Browser    BoolFlag         `json:"browser"`
+	Worm       BoolFlag         `json:"worm"`
+	Domain     string           `json:"domain"`
+
+	// Storage class configuration
+	StorageClass storageClassConfig `json:"storageclass"`
+
+	// Cache configuration
+	Cache CacheConfig `json:"cache"`
+
+	// KMS configuration
+	KMS crypto.KMSConfig `json:"kms"`
+
+	// Gateway SSE configuration.
+	SSE []string `json:"SSE"`
+
+	// Notification queue configuration.
+	Notify notifier `json:"notify"`
+
+	// Logger configuration
+	Logger loggerConfig `json:"logger"`
+}
