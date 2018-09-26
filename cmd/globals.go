@@ -255,7 +255,10 @@ var (
 	// OPA policy system.
 	globalPolicyOPA *iampolicy.Opa
 
+	// GlobalGatewaySSE sse options
+	GlobalGatewaySSE []string
 	// Add new variable global values here.
+
 )
 
 // global colors.

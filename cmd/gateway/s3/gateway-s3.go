@@ -28,13 +28,14 @@ import (
 	"github.com/minio/cli"
 	miniogo "github.com/minio/minio-go"
 	"github.com/minio/minio-go/pkg/credentials"
+	minio "github.com/minio/minio/cmd"
+
+	"github.com/minio/minio-go/pkg/encrypt"
 	"github.com/minio/minio-go/pkg/s3utils"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/policy"
-
-	minio "github.com/minio/minio/cmd"
 )
 
 const (
@@ -221,9 +222,13 @@ func (g *S3) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) 
 		return nil, err
 	}
 
-	return &s3Objects{
+	s := s3Objects{
 		Client: clnt,
-	}, nil
+	}
+	if len(minio.GlobalGatewaySSE) > 0 {
+		return &s3EncObjects{s}, nil
+	}
+	return &s, nil
 }
 
 // Production - s3 gateway is production ready.
@@ -396,7 +401,11 @@ func (l *s3Objects) GetObject(ctx context.Context, bucket string, key string, st
 
 // GetObjectInfo reads object info and replies back ObjectInfo
 func (l *s3Objects) GetObjectInfo(ctx context.Context, bucket string, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	oi, err := l.Client.StatObject(bucket, object, miniogo.StatObjectOptions{miniogo.GetObjectOptions{ServerSideEncryption: opts.ServerSideEncryption}})
+	statOpts := miniogo.StatObjectOptions{}
+	if opts.ServerSideEncryption != nil {
+		statOpts.ServerSideEncryption = opts.ServerSideEncryption
+	}
+	oi, err := l.Client.StatObject(bucket, object, statOpts)
 	if err != nil {
 		return minio.ObjectInfo{}, minio.ErrorRespToObjectError(err, bucket, object)
 	}
@@ -425,6 +434,17 @@ func (l *s3Objects) CopyObject(ctx context.Context, srcBucket string, srcObject 
 	// So preserve it by adding "REPLACE" directive to save all the metadata set by CopyObject API.
 	srcInfo.UserDefined["x-amz-metadata-directive"] = "REPLACE"
 	srcInfo.UserDefined["x-amz-copy-source-if-match"] = srcInfo.ETag
+	header := make(http.Header)
+	if srcOpts.ServerSideEncryption != nil {
+		encrypt.SSECopy(srcOpts.ServerSideEncryption).Marshal(header)
+	}
+
+	if dstOpts.ServerSideEncryption != nil {
+		dstOpts.ServerSideEncryption.Marshal(header)
+	}
+	for k, v := range header {
+		srcInfo.UserDefined[k] = v[0]
+	}
 	if _, err = l.Client.CopyObject(srcBucket, srcObject, dstBucket, dstObject, srcInfo.UserDefined); err != nil {
 		return objInfo, minio.ErrorRespToObjectError(err, srcBucket, srcObject)
 	}
@@ -476,10 +496,21 @@ func (l *s3Objects) PutObjectPart(ctx context.Context, bucket string, object str
 // existing object or a part of it.
 func (l *s3Objects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string,
 	partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
-
 	srcInfo.UserDefined = map[string]string{
 		"x-amz-copy-source-if-match": srcInfo.ETag,
 	}
+	header := make(http.Header)
+	if srcOpts.ServerSideEncryption != nil {
+		encrypt.SSECopy(srcOpts.ServerSideEncryption).Marshal(header)
+	}
+
+	if dstOpts.ServerSideEncryption != nil {
+		dstOpts.ServerSideEncryption.Marshal(header)
+	}
+	for k, v := range header {
+		srcInfo.UserDefined[k] = v[0]
+	}
+
 	completePart, err := l.Client.CopyObjectPart(srcBucket, srcObject, destBucket, destObject,
 		uploadID, partID, startOffset, length, srcInfo.UserDefined)
 	if err != nil {
@@ -554,4 +585,9 @@ func (l *s3Objects) DeleteBucketPolicy(ctx context.Context, bucket string) error
 // IsCompressionSupported returns whether compression is applicable for this layer.
 func (l *s3Objects) IsCompressionSupported() bool {
 	return false
+}
+
+// IsEncryptionSupported returns whether server side encryption is applicable for this layer.
+func (l *s3Objects) IsEncryptionSupported() bool {
+	return len(minio.GlobalGatewaySSE) > 0
 }
