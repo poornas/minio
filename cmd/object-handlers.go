@@ -105,6 +105,7 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 	opts, err := getEncryptionOpts(r, bucket, object)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
 	}
 	// Check for auth type to return S3 compatible error.
 	// type to return the correct error (NoSuchKey vs AccessDenied)
@@ -322,6 +323,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	opts, err := getEncryptionOpts(r, bucket, object)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
 	}
 	// Check for auth type to return S3 compatible error.
 	// type to return the correct error (NoSuchKey vs AccessDenied)
@@ -501,6 +503,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	opts, err := getEncryptionOpts(r, bucket, object)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, bucket, object); s3Error != ErrNone {
@@ -609,7 +612,6 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		host, port = "", ""
 	}
-
 	// Notify object accessed via a HEAD request.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectAccessedHead,
@@ -1226,6 +1228,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	opts, err = putEncryptionOpts(r, bucket, object, nil)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
 	}
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
@@ -1342,6 +1345,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	opts, err = putEncryptionOpts(r, bucket, object, nil)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
 	}
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutObjectAction, bucket, object); s3Error != ErrNone {
 		writeErrorResponse(w, s3Error, r.URL)
@@ -1607,6 +1611,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		dstOpts, err = copyDstEncryptionOpts(r, dstBucket, dstObject, li.UserDefined)
 		if err != nil {
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
 		}
 		if crypto.IsEncrypted(li.UserDefined) {
 			if !hasServerSideEncryptionHeader(r.Header) {
@@ -1829,7 +1834,13 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	// get gateway encryption options
 	var opts ObjectOptions
-
+	if crypto.SSEC.IsRequested(r.Header) {
+		opts, err = putEncryptionOpts(r, bucket, object, nil)
+		if err != nil {
+			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
+		}
+	}
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if _, err = objectAPI.GetObjectInfo(ctx, bucket, object, opts); err == nil {

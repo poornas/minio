@@ -1102,6 +1102,38 @@ func deriveClientKey(header http.Header, headerName, bucket, object string) ([32
 	return key, nil
 }
 
+// extract encryption options for pass through to backend in the case of gateway
+func extractEncryptionOption(header http.Header, copySource bool) (opts ObjectOptions, err error) {
+	var clientKey []byte
+	var sse encrypt.ServerSide
+
+	if crypto.SSECopy.IsRequested(header) && copySource {
+		clientKey, err = base64.StdEncoding.DecodeString(header.Get(crypto.SSECopyKey))
+		if err != nil || len(clientKey) != 32 { // The client key must be 256 bits long
+			return opts, crypto.ErrInvalidCustomerKey
+		}
+		if sse, err = encrypt.NewSSEC(clientKey); err != nil {
+			return
+		}
+		return ObjectOptions{ServerSideEncryption: encrypt.SSECopy(sse)}, nil
+	}
+
+	if crypto.SSEC.IsRequested(header) {
+		clientKey, err = base64.StdEncoding.DecodeString(header.Get(crypto.SSECKey))
+		if err != nil || len(clientKey) != 32 { // The client key must be 256 bits long
+			return opts, crypto.ErrInvalidCustomerKey
+		}
+		if sse, err = encrypt.NewSSEC(clientKey); err != nil {
+			return
+		}
+		return ObjectOptions{ServerSideEncryption: sse}, nil
+	}
+	if crypto.S3.IsRequested(header) {
+		return ObjectOptions{ServerSideEncryption: encrypt.NewSSE()}, nil
+	}
+	return opts, nil
+}
+
 // get ObjectOptions for GET calls from encryption headers
 func getEncryptionOpts(r *http.Request, bucket, object string) (ObjectOptions, error) {
 	var (
@@ -1123,7 +1155,8 @@ func getEncryptionOpts(r *http.Request, bucket, object string) (ObjectOptions, e
 			}
 		}
 	}
-	return opts, nil
+	// default case of passing encryption headers to backend
+	return extractEncryptionOption(r.Header, false)
 }
 
 // get ObjectOptions for PUT calls from encryption headers
@@ -1140,7 +1173,8 @@ func putEncryptionOpts(r *http.Request, bucket, object string, metadata map[stri
 			}
 		}
 	}
-	return
+	// default case of passing encryption headers to backend
+	return extractEncryptionOption(r.Header, false)
 }
 
 // get ObjectOptions for Copy calls for encryption headers provided on the target side
@@ -1157,7 +1191,8 @@ func copyDstEncryptionOpts(r *http.Request, bucket, object string, metadata map[
 			}
 		}
 	}
-	return
+	// default case of passing encryption headers to backend
+	return extractEncryptionOption(r.Header, false)
 }
 
 // get ObjectOptions for Copy calls for encryption headers provided on the source side
@@ -1177,9 +1212,10 @@ func copySrcEncryptionOpts(r *http.Request, bucket, object string) (ObjectOption
 				if err != nil {
 					return opts, err
 				}
-				opts = ObjectOptions{ServerSideEncryption: encrypt.SSECopy(ssec)}
+				return ObjectOptions{ServerSideEncryption: encrypt.SSECopy(ssec)}, nil
 			}
 		}
 	}
-	return opts, nil
+	// default case of passing encryption headers to backend
+	return extractEncryptionOption(r.Header, true)
 }

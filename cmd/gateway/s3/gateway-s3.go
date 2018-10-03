@@ -391,7 +391,6 @@ func (l *s3Objects) GetObject(ctx context.Context, bucket string, key string, st
 		return minio.ErrorRespToObjectError(err, bucket, key)
 	}
 	defer object.Close()
-
 	if _, err := io.Copy(writer, object); err != nil {
 		logger.LogIf(ctx, err)
 		return minio.ErrorRespToObjectError(err, bucket, key)
@@ -539,12 +538,11 @@ func (l *s3Objects) AbortMultipartUpload(ctx context.Context, bucket string, obj
 
 // CompleteMultipartUpload completes ongoing multipart upload and finalizes object
 func (l *s3Objects) CompleteMultipartUpload(ctx context.Context, bucket string, object string, uploadID string, uploadedParts []minio.CompletePart) (oi minio.ObjectInfo, e error) {
-	err := l.Client.CompleteMultipartUpload(bucket, object, uploadID, minio.ToMinioClientCompleteParts(uploadedParts))
+	etag, err := l.Client.CompleteMultipartUpload(bucket, object, uploadID, minio.ToMinioClientCompleteParts(uploadedParts))
 	if err != nil {
 		return oi, minio.ErrorRespToObjectError(err, bucket, object)
 	}
-
-	return l.GetObjectInfo(ctx, bucket, object, minio.ObjectOptions{})
+	return minio.ObjectInfo{ETag: etag}, nil
 }
 
 // SetBucketPolicy sets policy on bucket

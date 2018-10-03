@@ -179,8 +179,8 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	if len(dmeta.Parts) == 0 {
 		// custom gateway encrypted objects uploaded with single PUT operation
 		return l.s3Objects.GetObject(ctx, bucket, getGWContentPath(key), startOffset, length, writer, etag, o)
+		// custom multipart gateway encrypted objects
 	}
-	// custom multipart gateway encrypted objects
 	var partStartIndex int
 	var partStartOffset = startOffset
 
