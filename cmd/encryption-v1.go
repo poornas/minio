@@ -1107,15 +1107,18 @@ func extractEncryptionOption(header http.Header, copySource bool) (opts ObjectOp
 	var clientKey []byte
 	var sse encrypt.ServerSide
 
-	if crypto.SSECopy.IsRequested(header) && copySource {
-		clientKey, err = base64.StdEncoding.DecodeString(header.Get(crypto.SSECopyKey))
-		if err != nil || len(clientKey) != 32 { // The client key must be 256 bits long
-			return opts, crypto.ErrInvalidCustomerKey
+	if copySource {
+		if crypto.SSECopy.IsRequested(header) {
+			clientKey, err = base64.StdEncoding.DecodeString(header.Get(crypto.SSECopyKey))
+			if err != nil || len(clientKey) != 32 { // The client key must be 256 bits long
+				return opts, crypto.ErrInvalidCustomerKey
+			}
+			if sse, err = encrypt.NewSSEC(clientKey); err != nil {
+				return
+			}
+			return ObjectOptions{ServerSideEncryption: encrypt.SSECopy(sse)}, nil
 		}
-		if sse, err = encrypt.NewSSEC(clientKey); err != nil {
-			return
-		}
-		return ObjectOptions{ServerSideEncryption: encrypt.SSECopy(sse)}, nil
+		return
 	}
 
 	if crypto.SSEC.IsRequested(header) {

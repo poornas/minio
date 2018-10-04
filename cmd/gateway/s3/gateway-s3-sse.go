@@ -41,8 +41,9 @@ const (
 	// name of custom multipart metadata file for s3 backend.
 	gwdareMetaJSON string = "dare.meta"
 	// custom multipart files are stored under the defaultMinioGWPrefix
-	defaultMinioGWPrefix = ".minio"
-	slashSeparator       = "/"
+	defaultMinioGWPrefix     = ".minio"
+	defaultGWContentFileName = "data"
+	slashSeparator           = "/"
 )
 
 // s3EncObjects is a wrapper around s3Objects and implements gateway calls for
@@ -172,15 +173,16 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	}
 	dmeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(key))
 	if err != nil {
-		// unecnrypted content
+		// unencrypted content
 		return l.s3Objects.GetObject(ctx, bucket, key, startOffset, length, writer, etag, o)
 	}
 
 	if len(dmeta.Parts) == 0 {
 		// custom gateway encrypted objects uploaded with single PUT operation
 		return l.s3Objects.GetObject(ctx, bucket, getGWContentPath(key), startOffset, length, writer, etag, o)
-		// custom multipart gateway encrypted objects
 	}
+
+	// handle custom multipart gateway encrypted objects
 	var partStartIndex int
 	var partStartOffset = startOffset
 
@@ -358,6 +360,9 @@ func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObje
 		getOpts.ServerSideEncryption = encrypt.SSE(srcOpts.ServerSideEncryption)
 	}
 
+	// overwrite any previous unencrypted object with same name
+	defer l.s3Objects.DeleteObject(ctx, dstBucket, dstObject)
+
 	dstUploadID, err := l.NewMultipartUpload(ctx, dstBucket, dstObject, srcInfo.UserDefined, dstOpts)
 	if err != nil {
 		logger.LogIf(ctx, err)
@@ -386,6 +391,14 @@ func (l *s3EncObjects) DeleteObject(ctx context.Context, bucket string, object s
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.DeleteObject(ctx, bucket, object)
 	}
+	// Get dare meta json
+	if _, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object)); err != nil {
+		return l.s3Objects.DeleteObject(ctx, bucket, object)
+	}
+	return l.deleteEncryptedObject(ctx, bucket, object)
+}
+
+func (l *s3EncObjects) deleteEncryptedObject(ctx context.Context, bucket string, object string) error {
 	// Get dare meta json
 	gwMeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object))
 	if err != nil {
@@ -492,8 +505,16 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 		return l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
 	}
 	if opts.ServerSideEncryption == nil {
-		return l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
+		oi, err := l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
+		if err != nil {
+			return objInfo, err
+		}
+		l.deleteEncryptedObject(ctx, bucket, object)
+		return oi, nil
 	}
+	// overwrite any previous unencrypted object with same name
+	defer l.s3Objects.DeleteObject(ctx, bucket, object)
+
 	oi, err := l.s3Objects.PutObject(ctx, bucket, getGWContentPath(object), data, metadata, opts)
 	if err != nil {
 		return objInfo, err
@@ -676,6 +697,10 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	if err != nil {
 		return l.s3Objects.CompleteMultipartUpload(ctx, bucket, object, uploadID, uploadedParts)
 	}
+
+	// overwrite any previous unencrypted object with same name
+	defer l.s3Objects.DeleteObject(ctx, bucket, object)
+
 	// Calculate s3 compatible md5sum for complete multipart.
 	s3MD5, err := minio.GetCompleteMultipartMD5(ctx, uploadedParts)
 	if err != nil {
@@ -784,5 +809,82 @@ func getGWMetaPath(object string) string {
 
 // getGWContentPath returns the prefix under which custom small object is stored on backend after upload completes
 func getGWContentPath(object string) string {
-	return path.Join(object, defaultMinioGWPrefix, "data")
+	return path.Join(object, defaultMinioGWPrefix, defaultGWContentFileName)
+}
+
+// Clean-up the old multipart uploads. Should be run in a Go routine.
+func (l *s3EncObjects) cleanupStaleMultipartUploads(ctx context.Context, cleanupInterval, expiry time.Duration, doneCh chan struct{}) {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-doneCh:
+			return
+		case <-ticker.C:
+			l.cleanupStaleMultipartUploadsOnGW(ctx, expiry)
+		}
+	}
+}
+
+// cleanupStaleMultipartUploads removes old custom encryption multipart uploads on backend
+func (l *s3EncObjects) cleanupStaleMultipartUploadsOnGW(ctx context.Context, expiry time.Duration) {
+	for {
+		buckets, err := l.s3Objects.ListBuckets(ctx)
+		if err != nil {
+			break
+		}
+		for _, b := range buckets {
+			allParts, expParts := l.getStalePartsForBucket(ctx, b.Name, expiry)
+			for k := range expParts {
+				if _, ok := allParts[k]; !ok {
+					l.s3Objects.DeleteObject(ctx, b.Name, k)
+				}
+			}
+		}
+	}
+}
+
+func (l *s3EncObjects) getStalePartsForBucket(ctx context.Context, bucket string, expiry time.Duration) (allParts, expParts map[string]string) {
+	var prefix, continuationToken, delimiter, startAfter string
+	allParts = make(map[string]string)
+	expParts = make(map[string]string)
+	now := time.Now()
+	for {
+		loi, err := l.s3Objects.ListObjectsV2(ctx, bucket, prefix, continuationToken, delimiter, 1000, false, startAfter)
+		if err != nil {
+			break
+		}
+		for _, obj := range loi.Objects {
+			startAfter = obj.Name
+			if !strings.Contains(obj.Name, defaultMinioGWPrefix) {
+				continue
+			}
+			if strings.HasSuffix(obj.Name, path.Join(defaultMinioGWPrefix, gwdareMetaJSON)) {
+				objSlice := strings.Split(obj.Name, path.Join(slashSeparator, defaultMinioGWPrefix))
+				meta, err := l.getDareMetadata(ctx, bucket, objSlice[0])
+				if err != nil {
+					continue
+				}
+				for _, p := range meta.Parts {
+					allParts[p.Name] = ""
+				}
+			}
+			if strings.HasSuffix(obj.Name, path.Join(defaultMinioGWPrefix, defaultGWContentFileName)) {
+				objSlice := strings.Split(obj.Name, path.Join(slashSeparator, defaultMinioGWPrefix))
+				expParts[getGWContentPath(objSlice[0])] = ""
+			}
+			if now.Sub(obj.ModTime) > expiry {
+				// skip parts that are part of a completed upload
+				if _, ok := allParts[obj.Name]; !ok {
+					expParts[obj.Name] = ""
+				}
+			}
+		}
+		continuationToken = loi.NextContinuationToken
+		if !loi.IsTruncated {
+			break
+		}
+	}
+	return
 }

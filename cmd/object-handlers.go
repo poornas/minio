@@ -1657,7 +1657,6 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	// Copy source object to destination, if source and destination
 	// object is same then only metadata is updated.
 	var partInfo PartInfo
-
 	partInfo, err = objectAPI.CopyObjectPart(ctx, srcBucket, srcObject, dstBucket,
 		dstObject, uploadID, partID, startOffset, getLength, srcInfo, srcOpts, dstOpts)
 	if err != nil {

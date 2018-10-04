@@ -226,7 +226,9 @@ func (g *S3) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) 
 		Client: clnt,
 	}
 	if len(minio.GlobalGatewaySSE) > 0 {
-		return &s3EncObjects{s}, nil
+		encS := s3EncObjects{s}
+		go encS.cleanupStaleMultipartUploads(context.Background(), minio.GlobalMultipartCleanupInterval, minio.GlobalMultipartExpiry, minio.GlobalServiceDoneCh)
+		return &encS, nil
 	}
 	return &s, nil
 }
@@ -333,6 +335,7 @@ func (l *s3Objects) ListObjects(ctx context.Context, bucket string, prefix strin
 
 // ListObjectsV2 lists all blobs in S3 bucket filtered by prefix
 func (l *s3Objects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (loi minio.ListObjectsV2Info, e error) {
+
 	result, err := l.Client.ListObjectsV2(bucket, prefix, continuationToken, fetchOwner, delimiter, maxKeys, startAfter)
 	if err != nil {
 		return loi, minio.ErrorRespToObjectError(err, bucket)
@@ -400,11 +403,15 @@ func (l *s3Objects) GetObject(ctx context.Context, bucket string, key string, st
 
 // GetObjectInfo reads object info and replies back ObjectInfo
 func (l *s3Objects) GetObjectInfo(ctx context.Context, bucket string, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	statOpts := miniogo.StatObjectOptions{}
-	if opts.ServerSideEncryption != nil {
-		statOpts.ServerSideEncryption = opts.ServerSideEncryption
-	}
-	oi, err := l.Client.StatObject(bucket, object, statOpts)
+	// statOpts := miniogo.StatObjectOptions{}
+	// if opts.ServerSideEncryption != nil {
+	// 	statOpts.ServerSideEncryption = opts.ServerSideEncryption
+	// }
+	statOptions := miniogo.StatObjectOptions{miniogo.GetObjectOptions{
+		ServerSideEncryption: opts.ServerSideEncryption,
+	}}
+
+	oi, err := l.Client.StatObject(bucket, object, statOptions)
 	if err != nil {
 		return minio.ObjectInfo{}, minio.ErrorRespToObjectError(err, bucket, object)
 	}
