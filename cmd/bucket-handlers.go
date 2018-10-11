@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -618,7 +619,11 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					return
 				}
 			}
-			reader, err = newEncryptReader(hashReader, key, bucket, object, metadata, crypto.S3.IsRequested(formValues))
+			var etag string
+			if hasServerSideEncryptionHeader(r.Header) {
+				etag = hex.EncodeToString(hashReader.MD5())
+			}
+			reader, err = newEncryptReader(hashReader, key, bucket, object, metadata, crypto.S3.IsRequested(formValues), etag)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return

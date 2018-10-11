@@ -753,8 +753,9 @@ func (xl xlObjects) putObject(ctx context.Context, bucket string, object string,
 
 	// Save additional erasureMetadata.
 	modTime := UTCNow()
-	metadata["etag"] = hex.EncodeToString(data.MD5Current())
-
+	if _, ok := metadata["etag"]; !ok || opts.ServerSideEncryption == nil {
+		metadata["etag"] = hex.EncodeToString(data.MD5Current())
+	}
 	// Guess content-type from the extension if possible.
 	if metadata["content-type"] == "" {
 		metadata["content-type"] = mimedb.TypeByExtension(path.Ext(object))

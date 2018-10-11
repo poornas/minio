@@ -164,7 +164,13 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 		getObjectNInfo = api.CacheAPI().GetObjectNInfo
 	}
 
-	gr, err := getObjectNInfo(ctx, bucket, object, nil, r.Header, readLock, ObjectOptions{})
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+
+	gr, err := getObjectNInfo(ctx, bucket, object, nil, r.Header, readLock, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -305,7 +311,11 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
-	var opts ObjectOptions
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
 
 	// Check for auth type to return S3 compatible error.
 	// type to return the correct error (NoSuchKey vs AccessDenied)
@@ -335,7 +345,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 					getObjectInfo = api.CacheAPI().GetObjectInfo
 				}
 
-				_, err := getObjectInfo(ctx, bucket, object, opts)
+				_, err = getObjectInfo(ctx, bucket, object, opts)
 				if toAPIErrorCode(err) == ErrNoSuchKey {
 					s3Error = ErrNoSuchKey
 				}
@@ -354,7 +364,6 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	var rs *HTTPRangeSpec
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		var err error
 		if rs, err = parseRequestRangeSpec(rangeHeader); err != nil {
 			// Handle only errInvalidRange. Ignore other
 			// parse error and treat it as regular Get
@@ -377,7 +386,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	objInfo := gr.ObjInfo
 
 	if objectAPI.IsEncryptionSupported() {
-		if _, err = DecryptObjectInfo(objInfo, r.Header); err != nil {
+		if _, err = DecryptObjectInfo(&objInfo, r.Header); err != nil {
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
 		}
@@ -482,7 +491,12 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 		getObjectInfo = api.CacheAPI().GetObjectInfo
 	}
 
-	var opts ObjectOptions
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, bucket, object); s3Error != ErrNone {
 		if getRequestAuthType(r) == authTypeAnonymous {
 			// As per "Permission" section in
@@ -504,7 +518,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 				ConditionValues: getConditionValues(r, ""),
 				IsOwner:         false,
 			}) {
-				_, err := getObjectInfo(ctx, bucket, object, opts)
+				_, err = getObjectInfo(ctx, bucket, object, opts)
 				if toAPIErrorCode(err) == ErrNoSuchKey {
 					s3Error = ErrNoSuchKey
 				}
@@ -518,7 +532,6 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	var rs *HTTPRangeSpec
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		var err error
 		if rs, err = parseRequestRangeSpec(rangeHeader); err != nil {
 			// Handle only errInvalidRange. Ignore other
 			// parse error and treat it as regular Get
@@ -539,7 +552,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	if objectAPI.IsEncryptionSupported() {
-		if _, err = DecryptObjectInfo(objInfo, r.Header); err != nil {
+		if _, err = DecryptObjectInfo(&objInfo, r.Header); err != nil {
 			writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
 			return
 		}
@@ -548,6 +561,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	// Set encryption response headers
 	if objectAPI.IsEncryptionSupported() {
 		if crypto.IsEncrypted(objInfo.UserDefined) {
+			objInfo.ETag = getDecryptedETag(r.Header, objInfo, false)
 			switch {
 			case crypto.S3.IsEncrypted(objInfo.UserDefined):
 				w.Header().Set(crypto.SSEHeader, crypto.SSEAlgorithmAES256)
@@ -685,7 +699,16 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var srcOpts, dstOpts ObjectOptions
+	srcOpts, err := extractEncryptionOption(r.Header, true)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+	dstOpts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
@@ -857,7 +880,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 			}
 
 			if isTargetEncrypted {
-				reader, err = newEncryptReader(reader, newKey, dstBucket, dstObject, encMetadata, sseS3)
+				reader, err = newEncryptReader(reader, newKey, dstBucket, dstObject, encMetadata, sseS3, getDecryptedETag(r.Header, srcInfo, true))
 				if err != nil {
 					writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 					return
@@ -956,7 +979,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	response := generateCopyObjectResponse(objInfo.ETag, objInfo.ModTime)
+	response := generateCopyObjectResponse(getDecryptedETag(r.Header, objInfo, false), objInfo.ModTime)
 	encodedSuccessResponse := encodeResponse(response)
 
 	// Write success response.
@@ -987,7 +1010,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		logger.GetReqInfo(ctx).SetTags(k, v)
 	}
 
-	logger.GetReqInfo(ctx).SetTags("etag", objInfo.ETag)
+	logger.GetReqInfo(ctx).SetTags("etag", getDecryptedETag(r.Header, objInfo, false))
 }
 
 // PutObjectHandler - PUT Object
@@ -1037,7 +1060,6 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(w, ErrInvalidDigest, r.URL)
 		return
 	}
-
 	/// if Content-Length is unknown/missing, deny the request
 	size := r.ContentLength
 	rAuthType := getRequestAuthType(r)
@@ -1167,7 +1189,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-	opts := ObjectOptions{}
+
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if _, err = objectAPI.GetObjectInfo(ctx, bucket, object, opts); err == nil {
@@ -1178,7 +1206,11 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	if objectAPI.IsEncryptionSupported() {
 		if hasServerSideEncryptionHeader(r.Header) && !hasSuffix(object, slashSeparator) { // handle SSE requests
-			reader, err = EncryptRequest(hashReader, r, bucket, object, metadata)
+			var etag string
+			if hasServerSideEncryptionHeader(r.Header) {
+				etag = hex.EncodeToString(hashReader.MD5())
+			}
+			reader, err = EncryptRequest(hashReader, r, bucket, object, metadata, etag)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1210,8 +1242,11 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		// Ignore compressed ETag.
 		objInfo.ETag = objInfo.ETag + "-1"
 	}
-
-	w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+	if hasServerSideEncryptionHeader(r.Header) {
+		w.Header().Set("ETag", "\""+getDecryptedETag(r.Header, objInfo, false)+"\"")
+	} else {
+		w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+	}
 	if objectAPI.IsEncryptionSupported() {
 		if crypto.IsEncrypted(objInfo.UserDefined) {
 			switch {
@@ -1276,7 +1311,11 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
-	opts := ObjectOptions{}
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutObjectAction, bucket, object); s3Error != ErrNone {
 		writeErrorResponse(w, s3Error, r.URL)
@@ -1285,7 +1324,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		if _, err := objectAPI.GetObjectInfo(ctx, bucket, object, opts); err == nil {
+		if _, err = objectAPI.GetObjectInfo(ctx, bucket, object, opts); err == nil {
 			writeErrorResponse(w, ErrMethodNotAllowed, r.URL)
 			return
 		}
@@ -1303,7 +1342,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 
 	if objectAPI.IsEncryptionSupported() {
 		if hasServerSideEncryptionHeader(r.Header) {
-			if err := setEncryptionMetadata(r, bucket, object, encMetadata); err != nil {
+			if err = setEncryptionMetadata(r, bucket, object, encMetadata, ""); err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -1404,7 +1443,16 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
-	var srcOpts, dstOpts ObjectOptions
+	srcOpts, err := extractEncryptionOption(r.Header, true)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+	dstOpts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
@@ -1735,7 +1783,12 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	opts := ObjectOptions{}
+	opts, err := extractEncryptionOption(r.Header, false)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
+		return
+	}
+
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if _, err = objectAPI.GetObjectInfo(ctx, bucket, object, opts); err == nil {

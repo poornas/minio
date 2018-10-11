@@ -462,7 +462,7 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 		return fsMeta.ToObjectInfo(srcBucket, srcObject, fi), nil
 	}
 
-	objInfo, err := fs.putObject(ctx, dstBucket, dstObject, srcInfo.Reader, srcInfo.UserDefined)
+	objInfo, err := fs.putObject(ctx, dstBucket, dstObject, srcInfo.Reader, srcInfo.UserDefined, dstOpts)
 	if err != nil {
 		return oi, toObjectErr(err, dstBucket, dstObject)
 	}
@@ -824,11 +824,11 @@ func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string
 		return objInfo, err
 	}
 	defer objectLock.Unlock()
-	return fs.putObject(ctx, bucket, object, data, metadata)
+	return fs.putObject(ctx, bucket, object, data, metadata, opts)
 }
 
 // putObject - wrapper for PutObject
-func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string, data *hash.Reader, metadata map[string]string) (objInfo ObjectInfo, retErr error) {
+func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string, data *hash.Reader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
 	// No metadata is set, allocate a new one.
 	meta := make(map[string]string)
 	for k, v := range metadata {
@@ -921,7 +921,9 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 	}
 
 	fsMeta.Meta["etag"] = hex.EncodeToString(data.MD5Current())
-
+	if _, ok := metadata["etag"]; ok && opts.ServerSideEncryption != nil {
+		fsMeta.Meta["etag"] = metadata["etag"]
+	}
 	// Should return IncompleteBody{} error when reader has fewer
 	// bytes than specified in request header.
 	if bytesWritten < data.Size() {
