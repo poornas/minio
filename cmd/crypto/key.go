@@ -140,3 +140,35 @@ func (key ObjectKey) DerivePartKey(id uint32) (partKey [32]byte) {
 	mac.Sum(partKey[:0])
 	return partKey
 }
+
+// SealETag encrypts an non-empty etag. It does
+// not encrypt the etag if len(etag) == 0.
+func (key ObjectKey) SealETag(etag []byte) []byte {
+	if len(etag) == 0 { // do not encrypt an empty etag
+		return etag
+	}
+	var buffer bytes.Buffer
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("SSE-etag"))
+	if _, err := sio.Encrypt(&buffer, bytes.NewReader(etag), sio.Config{Key: mac.Sum(nil)}); err != nil {
+		logger.CriticalIf(context.Background(), errors.New("Unable to encrypt etag using the object key"))
+	}
+	return buffer.Bytes()
+}
+
+// UnsealETag decrypts an encrypted etag. It only tries
+// to decrypt the etag if len(etag) <= 32 which indicates
+// a plaintext etag.
+// It returns an non-nil error if unsealing fails.
+func (key ObjectKey) UnsealETag(etag []byte) ([]byte, error) {
+	if len(etag) <= 32 { // do not try to decrypt plaintext etag - encrypted etag is always > 32.
+		return etag, nil
+	}
+	var buffer bytes.Buffer
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("SSE-etag"))
+	if _, err := sio.Decrypt(&buffer, bytes.NewReader(etag), sio.Config{Key: mac.Sum(nil)}); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
