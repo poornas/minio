@@ -1118,7 +1118,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		sha256hex = ""
 		reader    io.Reader
 		s3Err     APIErrorCode
-		putObject = objectAPI.PutObject
+		//putObject = objectAPI.PutObject
 	)
 	reader = r.Body
 
@@ -1189,7 +1189,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-
+	pReader := &PutObjectReader{origReader: hashReader}
 	opts, err := extractEncryptionOption(r.Header, false)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
@@ -1221,6 +1221,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			pReader.dataReader = hashReader
 		}
 	}
 
@@ -1228,11 +1229,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	crypto.RemoveSensitiveEntries(metadata)
 
 	if api.CacheAPI() != nil && !hasServerSideEncryptionHeader(r.Header) {
-		putObject = api.CacheAPI().PutObject
+		//putObject = api.CacheAPI().PutObject
 	}
 
 	// Create the object..
-	objInfo, err := putObject(ctx, bucket, object, hashReader, metadata, opts)
+	//	objInfo, err := putObject(ctx, bucket, object, hashReader, metadata, opts)
+
+	objInfo, err := objectAPI.PutObjectV2(ctx, bucket, object, pReader, metadata, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return

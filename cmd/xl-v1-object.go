@@ -548,6 +548,10 @@ func rename(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry, dstBuc
 	return evalDisks(disks, errs), err
 }
 
+func (xl xlObjects) PutObjectV2(ctx context.Context, bucket string, object string, data *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	return xl.PutObject(ctx, bucket, object, data.dataReader, metadata, opts)
+}
+
 // PutObject - creates an object upon reading from the input stream
 // until EOF, erasure codes the data across all disk and additionally
 // writes `xl.json` which carries the necessary metadata for future

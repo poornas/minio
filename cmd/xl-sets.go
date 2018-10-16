@@ -602,6 +602,11 @@ func (s *xlSets) PutObject(ctx context.Context, bucket string, object string, da
 	return s.getHashedSet(object).PutObject(ctx, bucket, object, data, metadata, opts)
 }
 
+// PutObjectV2 - writes an object to hashedSet based on the object name.
+func (s *xlSets) PutObjectV2(ctx context.Context, bucket string, object string, data *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	return s.getHashedSet(object).PutObject(ctx, bucket, object, data.dataReader, metadata, opts)
+}
+
 // GetObjectInfo - reads object metadata from the hashedSet based on the object name.
 func (s *xlSets) GetObjectInfo(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
 	return s.getHashedSet(object).GetObjectInfo(ctx, bucket, object, opts)

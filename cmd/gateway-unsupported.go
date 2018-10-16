@@ -28,6 +28,12 @@ import (
 // GatewayUnsupported list of unsupported call stubs for gateway.
 type GatewayUnsupported struct{}
 
+//PutObjectV2 ....
+func (a GatewayUnsupported) PutObjectV2(ctx context.Context, bucket string, object string, data *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return
+}
+
 // ListMultipartUploads lists all multipart uploads.
 func (a GatewayUnsupported) ListMultipartUploads(ctx context.Context, bucket string, prefix string, keyMarker string, uploadIDMarker string, delimiter string, maxUploads int) (lmi ListMultipartsInfo, err error) {
 	logger.LogIf(ctx, NotImplemented{})

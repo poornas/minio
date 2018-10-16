@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -807,6 +808,163 @@ func (fs *FSObjects) parentDirIsObject(ctx context.Context, bucket, parent strin
 		return isParentDirObject(path.Dir(p))
 	}
 	return isParentDirObject(parent)
+}
+func (fs *FSObjects) PutObjectV2(ctx context.Context, bucket, object string, data *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	if err := checkPutObjectArgs(ctx, bucket, object, fs, data.Size()); err != nil {
+		return ObjectInfo{}, err
+	}
+	// Lock the object.
+	objectLock := fs.nsMutex.NewNSLock(bucket, object)
+	if err := objectLock.GetLock(globalObjectTimeout); err != nil {
+		logger.LogIf(ctx, err)
+		return objInfo, err
+	}
+	defer objectLock.Unlock()
+	return fs.putObjectV2(ctx, bucket, object, data, metadata, opts)
+}
+
+// putObject - wrapper for PutObject
+func (fs *FSObjects) putObjectV2(ctx context.Context, bucket string, object string, r *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
+	// No metadata is set, allocate a new one.
+	meta := make(map[string]string)
+	for k, v := range metadata {
+		meta[k] = v
+	}
+	var err error
+
+	// Validate if bucket name is valid and exists.
+	if _, err = fs.statBucketDir(ctx, bucket); err != nil {
+		return ObjectInfo{}, toObjectErr(err, bucket)
+	}
+	var data *hash.Reader
+	if opts.ServerSideEncryption != nil {
+		data = r.dataReader
+	} else {
+		data = r.origReader
+	}
+	fsMeta := newFSMetaV1()
+	fsMeta.Meta = meta
+
+	// This is a special case with size as '0' and object ends
+	// with a slash separator, we treat it like a valid operation
+	// and return success.
+	if isObjectDir(object, data.Size()) {
+		// Check if an object is present as one of the parent dir.
+		if fs.parentDirIsObject(ctx, bucket, path.Dir(object)) {
+			logger.LogIf(ctx, errFileAccessDenied)
+			return ObjectInfo{}, toObjectErr(errFileAccessDenied, bucket, object)
+		}
+		if err = mkdirAll(pathJoin(fs.fsPath, bucket, object), 0777); err != nil {
+			logger.LogIf(ctx, err)
+			return ObjectInfo{}, toObjectErr(err, bucket, object)
+		}
+		var fi os.FileInfo
+		if fi, err = fsStatDir(ctx, pathJoin(fs.fsPath, bucket, object)); err != nil {
+			return ObjectInfo{}, toObjectErr(err, bucket, object)
+		}
+		return fsMeta.ToObjectInfo(bucket, object, fi), nil
+	}
+
+	if err = checkPutObjectArgs(ctx, bucket, object, fs, data.Size()); err != nil {
+		return ObjectInfo{}, err
+	}
+
+	// Check if an object is present as one of the parent dir.
+	if fs.parentDirIsObject(ctx, bucket, path.Dir(object)) {
+		logger.LogIf(ctx, errFileAccessDenied)
+		return ObjectInfo{}, toObjectErr(errFileAccessDenied, bucket, object)
+	}
+
+	// Validate input data size and it can never be less than zero.
+	if data.Size() < -1 {
+		logger.LogIf(ctx, errInvalidArgument)
+		return ObjectInfo{}, errInvalidArgument
+	}
+
+	var wlk *lock.LockedFile
+	if bucket != minioMetaBucket {
+		bucketMetaDir := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix)
+
+		fsMetaPath := pathJoin(bucketMetaDir, bucket, object, fs.metaJSONFile)
+		wlk, err = fs.rwPool.Create(fsMetaPath)
+		if err != nil {
+			logger.LogIf(ctx, err)
+			return ObjectInfo{}, toObjectErr(err, bucket, object)
+		}
+		// This close will allow for locks to be synchronized on `fs.json`.
+		defer wlk.Close()
+		defer func() {
+			// Remove meta file when PutObject encounters any error
+			if retErr != nil {
+				tmpDir := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID)
+				fsRemoveMeta(ctx, bucketMetaDir, fsMetaPath, tmpDir)
+			}
+		}()
+	}
+
+	// Uploaded object will first be written to the temporary location which will eventually
+	// be renamed to the actual location. It is first written to the temporary location
+	// so that cleaning it up will be easy if the server goes down.
+	tempObj := mustGetUUID()
+
+	// Allocate a buffer to Read() from request body
+	bufSize := int64(readSizeV1)
+	if size := data.Size(); size > 0 && bufSize > size {
+		bufSize = size
+	}
+
+	buf := make([]byte, int(bufSize))
+	fsTmpObjPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, tempObj)
+	bytesWritten, err := fsCreateFile(ctx, fsTmpObjPath, data, buf, data.Size())
+	if err != nil {
+		fsRemoveFile(ctx, fsTmpObjPath)
+		return ObjectInfo{}, toObjectErr(err, bucket, object)
+	}
+
+	fsMeta.Meta["etag"] = hex.EncodeToString(data.MD5Current())
+	if _, ok := metadata["etag"]; ok && opts.ServerSideEncryption != nil {
+		fsMeta.Meta["etag"] = metadata["etag"]
+	}
+	fmt.Println("original reader's etag is ::: ", hex.EncodeToString(r.origReader.MD5Current()), "encreader's:: ", hex.EncodeToString(r.dataReader.MD5Current()))
+	// Should return IncompleteBody{} error when reader has fewer
+	// bytes than specified in request header.
+	if bytesWritten < data.Size() {
+		fsRemoveFile(ctx, fsTmpObjPath)
+		return ObjectInfo{}, IncompleteBody{}
+	}
+
+	// Delete the temporary object in the case of a
+	// failure. If PutObject succeeds, then there would be
+	// nothing to delete.
+	defer fsRemoveFile(ctx, fsTmpObjPath)
+
+	// Entire object was written to the temp location, now it's safe to rename it to the actual location.
+	fsNSObjPath := pathJoin(fs.fsPath, bucket, object)
+	// Deny if WORM is enabled
+	if globalWORMEnabled {
+		if _, err = fsStatFile(ctx, fsNSObjPath); err == nil {
+			return ObjectInfo{}, ObjectAlreadyExists{Bucket: bucket, Object: object}
+		}
+	}
+	if err = fsRenameFile(ctx, fsTmpObjPath, fsNSObjPath); err != nil {
+		return ObjectInfo{}, toObjectErr(err, bucket, object)
+	}
+
+	if bucket != minioMetaBucket {
+		// Write FS metadata after a successful namespace operation.
+		if _, err = fsMeta.WriteTo(wlk); err != nil {
+			return ObjectInfo{}, toObjectErr(err, bucket, object)
+		}
+	}
+
+	// Stat the file to fetch timestamp, size.
+	fi, err := fsStatFile(ctx, pathJoin(fs.fsPath, bucket, object))
+	if err != nil {
+		return ObjectInfo{}, toObjectErr(err, bucket, object)
+	}
+
+	// Success.
+	return fsMeta.ToObjectInfo(bucket, object, fi), nil
 }
 
 // PutObject - creates an object upon reading from the input stream
