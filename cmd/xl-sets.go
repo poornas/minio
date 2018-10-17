@@ -598,7 +598,7 @@ func (s *xlSets) GetObject(ctx context.Context, bucket, object string, startOffs
 }
 
 // PutObject - writes an object to hashedSet based on the object name.
-func (s *xlSets) PutObject(ctx context.Context, bucket string, object string, data *hash.Reader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+func (s *xlSets) PutObject(ctx context.Context, bucket string, object string, data *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, err error) {
 	return s.getHashedSet(object).PutObject(ctx, bucket, object, data, metadata, opts)
 }
 
@@ -631,7 +631,7 @@ func (s *xlSets) CopyObject(ctx context.Context, srcBucket, srcObject, destBucke
 		defer objectDWLock.Unlock()
 	}
 
-	return destSet.putObject(ctx, destBucket, destObject, srcInfo.Reader, srcInfo.UserDefined, dstOpts)
+	return destSet.putObject(ctx, destBucket, destObject, NewPutObjectReader(srcInfo.Reader), srcInfo.UserDefined, dstOpts)
 }
 
 // Returns function "listDir" of the type listDirFunc.

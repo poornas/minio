@@ -817,6 +817,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
+	pReader := NewPutObjectReader(srcInfo.Reader)
 
 	var encMetadata = make(map[string]string)
 	if objectAPI.IsEncryptionSupported() && !srcInfo.IsCompressed() {
@@ -904,6 +905,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			pReader.DataReader = srcInfo.Reader
 		}
 	}
 
@@ -1190,6 +1192,8 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	pReader := NewPutObjectReader(hashReader)
+
 	opts, err := extractEncryptionOption(r.Header, false)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
@@ -1221,6 +1225,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			pReader.DataReader = hashReader
 		}
 	}
 
@@ -1232,7 +1237,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Create the object..
-	objInfo, err := putObject(ctx, bucket, object, hashReader, metadata, opts)
+	objInfo, err := putObject(ctx, bucket, object, pReader, metadata, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return

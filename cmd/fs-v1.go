@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/lock"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/mimedb"
@@ -462,7 +461,7 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 		return fsMeta.ToObjectInfo(srcBucket, srcObject, fi), nil
 	}
 
-	objInfo, err := fs.putObject(ctx, dstBucket, dstObject, srcInfo.Reader, srcInfo.UserDefined, dstOpts)
+	objInfo, err := fs.putObject(ctx, dstBucket, dstObject, NewPutObjectReader(srcInfo.Reader), srcInfo.UserDefined, dstOpts)
 	if err != nil {
 		return oi, toObjectErr(err, dstBucket, dstObject)
 	}
@@ -813,8 +812,8 @@ func (fs *FSObjects) parentDirIsObject(ctx context.Context, bucket, parent strin
 // until EOF, writes data directly to configured filesystem path.
 // Additionally writes `fs.json` which carries the necessary metadata
 // for future object operations.
-func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string, data *hash.Reader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
-	if err := checkPutObjectArgs(ctx, bucket, object, fs, data.Size()); err != nil {
+func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string, r *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
+	if err := checkPutObjectArgs(ctx, bucket, object, fs, r.Size()); err != nil {
 		return ObjectInfo{}, err
 	}
 	// Lock the object.
@@ -824,11 +823,13 @@ func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string
 		return objInfo, err
 	}
 	defer objectLock.Unlock()
-	return fs.putObject(ctx, bucket, object, data, metadata, opts)
+	return fs.putObject(ctx, bucket, object, r, metadata, opts)
 }
 
 // putObject - wrapper for PutObject
-func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string, data *hash.Reader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
+func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string, r *PutObjectReader, metadata map[string]string, opts ObjectOptions) (objInfo ObjectInfo, retErr error) {
+	data := r.DataReader
+
 	// No metadata is set, allocate a new one.
 	meta := make(map[string]string)
 	for k, v := range metadata {
@@ -920,7 +921,8 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
 
-	fsMeta.Meta["etag"] = hex.EncodeToString(data.MD5Current())
+	fsMeta.Meta["etag"] = hex.EncodeToString(r.OrigReader.MD5Current())
+	//todo: remove this stuff
 	if _, ok := metadata["etag"]; ok && opts.ServerSideEncryption != nil {
 		fsMeta.Meta["etag"] = metadata["etag"]
 	}

@@ -35,6 +35,7 @@ import (
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/dns"
+	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/ioutil"
 	"github.com/minio/minio/pkg/wildcard"
 	"github.com/skyrings/skyring-common/tools/uuid"
@@ -596,4 +597,22 @@ func (g *GetObjectReader) Read(p []byte) (n int, err error) {
 		g.Close()
 	}
 	return
+}
+
+// PutObjectReader is a type that wraps sio.EncryptReader and
+// underlying hash.Reader in a struct
+type PutObjectReader struct {
+	DataReader *hash.Reader // actual data stream
+	OrigReader *hash.Reader // original data stream
+}
+
+// Size returns the absolute number of bytes the Reader
+// will return during reading. It returns -1 for unlimited
+// data.
+func (p *PutObjectReader) Size() int64 {
+	return p.DataReader.Size()
+}
+
+func NewPutObjectReader(r *hash.Reader) *PutObjectReader {
+	return &PutObjectReader{OrigReader: r, DataReader: r}
 }

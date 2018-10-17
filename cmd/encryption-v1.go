@@ -190,7 +190,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 		objectKey := crypto.GenerateKey(key, rand.Reader)
 		sealedKey = objectKey.Seal(key, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
 		crypto.S3.CreateMetadata(metadata, globalKMSKeyID, encKey, sealedKey)
-		saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+		//saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 		return objectKey[:], nil
 	}
 	var extKey [32]byte
@@ -198,7 +198,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 	objectKey := crypto.GenerateKey(extKey, rand.Reader)
 	sealedKey = objectKey.Seal(extKey, crypto.GenerateIV(rand.Reader), crypto.SSEC.String(), bucket, object)
 	crypto.SSEC.CreateMetadata(metadata, sealedKey)
-	saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+	//saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 	return objectKey[:], nil
 }
 

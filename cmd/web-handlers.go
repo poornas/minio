@@ -755,7 +755,7 @@ func (web *webAPIHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	objInfo, err := putObject(ctx, bucket, object, hashReader, metadata, opts)
+	objInfo, err := putObject(ctx, bucket, object, NewPutObjectReader(hashReader), metadata, opts)
 	if err != nil {
 		writeWebErrorResponse(w, err)
 		return

@@ -18,6 +18,8 @@ package hash
 
 import (
 	"bytes"
+	"context"
+	"crypto/hmac"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -25,7 +27,9 @@ import (
 	"hash"
 	"io"
 
+	"github.com/minio/minio/cmd/logger"
 	sha256 "github.com/minio/sha256-simd"
+	"github.com/minio/sio"
 )
 
 var errNestedReader = errors.New("Nesting of Reader detected, not allowed")
@@ -39,6 +43,7 @@ type Reader struct {
 
 	md5sum, sha256sum   []byte // Byte values of md5sum, sha256sum of client sent values.
 	md5Hash, sha256Hash hash.Hash
+	encryptionKey       [32]byte
 }
 
 // NewReader returns a new hash Reader which computes the MD5 sum and
@@ -151,4 +156,18 @@ func (r *Reader) Verify() error {
 		}
 	}
 	return nil
+}
+
+func (r *Reader) SetEncryptionKey(key [32]byte) {
+	r.encryptionKey = key
+}
+
+func (r *Reader) EncryptedMD5Sum() string {
+	var buffer bytes.Buffer
+	mac := hmac.New(sha256.New, r.encryptionKey[:])
+	mac.Write([]byte("SSE-etag"))
+	if _, err := sio.Encrypt(&buffer, bytes.NewReader(r.md5sum), sio.Config{Key: mac.Sum(nil)}); err != nil {
+		logger.CriticalIf(context.Background(), errors.New("Unable to encrypt etag using the object key"))
+	}
+	return hex.EncodeToString(buffer.Bytes())
 }
