@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	goioutil "io/ioutil"
 	"net"
@@ -30,6 +31,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/minio/minio-go/pkg/encrypt"
 
 	snappy "github.com/golang/snappy"
 	"github.com/gorilla/mux"
@@ -1788,6 +1791,8 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	pReader := NewPutObjectReader(hashReader)
+
 	opts, err := extractEncryptionOption(r.Header, false)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
@@ -1802,6 +1807,8 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		}
 	}
 
+	isEncrypted := hasServerSideEncryptionHeader(r.Header)
+	var objectEncryptionKey []byte
 	if objectAPI.IsEncryptionSupported() && !isCompressed {
 		var li ListPartsInfo
 		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
@@ -1810,9 +1817,9 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			return
 		}
 		if crypto.IsEncrypted(li.UserDefined) {
-			if !hasServerSideEncryptionHeader(r.Header) {
-				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
-				return
+			isEncrypted = true
+			if crypto.S3.IsEncrypted(li.UserDefined) {
+				opts.ServerSideEncryption = encrypt.NewSSE()
 			}
 			var key []byte
 			if crypto.SSEC.IsRequested(r.Header) {
@@ -1843,6 +1850,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			pReader.OrigReader.SetEncryptionKey(objectEncryptionKey)
 
 			info := ObjectInfo{Size: size}
 			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", size) // do not try to verify encrypted content
@@ -1850,14 +1858,15 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			pReader.DataReader = hashReader
 		}
 	}
 
 	putObjectPart := objectAPI.PutObjectPart
-	if api.CacheAPI() != nil && !hasServerSideEncryptionHeader(r.Header) {
+	if api.CacheAPI() != nil && !isEncrypted {
 		putObjectPart = api.CacheAPI().PutObjectPart
 	}
-	partInfo, err := putObjectPart(ctx, bucket, object, uploadID, partID, hashReader, opts)
+	partInfo, err := putObjectPart(ctx, bucket, object, uploadID, partID, pReader, opts)
 	if err != nil {
 		// Verify if the underlying error is signature mismatch.
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
@@ -1868,8 +1877,14 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		// Suppress compressed ETag.
 		partInfo.ETag = partInfo.ETag + "-1"
 	}
+
 	if partInfo.ETag != "" {
-		w.Header().Set("ETag", "\""+partInfo.ETag+"\"")
+		fmt.Println("partInfo.ETag", partInfo.ETag, objectEncryptionKey)
+		if isEncrypted {
+			w.Header().Set("ETag", "\""+tryDecryptETag(objectEncryptionKey, partInfo.ETag)+"\"")
+		} else {
+			w.Header().Set("ETag", "\""+partInfo.ETag+"\"")
+		}
 	}
 
 	writeSuccessResponseHeadersOnly(w)

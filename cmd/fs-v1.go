@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -920,12 +921,23 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 		fsRemoveFile(ctx, fsTmpObjPath)
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
-
-	fsMeta.Meta["etag"] = hex.EncodeToString(r.OrigReader.MD5Current())
-	//todo: remove this stuff
-	if _, ok := metadata["etag"]; ok && opts.ServerSideEncryption != nil {
-		fsMeta.Meta["etag"] = metadata["etag"]
+	// fmt.Println("orig reader state:", r.OrigReader, hex.EncodeToString(r.OrigReader.MD5Current()), "md5hash ", hex.EncodeToString(r.OrigReader.MD5()))
+	// fmt.Println("data reader state", r.DataReader)
+	fsMeta.Meta["etag"] = hex.EncodeToString(r.DataReader.MD5Current())
+	fmt.Println("set etag with wrapped reader to ", fsMeta.Meta["etag"])
+	if opts.ServerSideEncryption != nil {
+		_, ok := metadata["etag"]
+		fmt.Println("etagfin meta:", metadata["etag"])
+		if ok {
+			fsMeta.Meta["etag"] = metadata["etag"]
+		} else {
+			if encMD5Sum, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
+				fsMeta.Meta["etag"] = encMD5Sum
+				fmt.Println("encMD5Sum :", encMD5Sum)
+			}
+		}
 	}
+
 	// Should return IncompleteBody{} error when reader has fewer
 	// bytes than specified in request header.
 	if bytesWritten < data.Size() {

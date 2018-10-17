@@ -655,7 +655,8 @@ func (l *b2Objects) NewMultipartUpload(ctx context.Context, bucket string, objec
 }
 
 // PutObjectPart puts a part of object in bucket, uses B2's LargeFile upload API.
-func (l *b2Objects) PutObjectPart(ctx context.Context, bucket string, object string, uploadID string, partID int, data *h2.Reader, opts minio.ObjectOptions) (pi minio.PartInfo, err error) {
+func (l *b2Objects) PutObjectPart(ctx context.Context, bucket string, object string, uploadID string, partID int, r *minio.PutObjectReader, opts minio.ObjectOptions) (pi minio.PartInfo, err error) {
+	data := r.DataReader
 	bkt, err := l.Bucket(ctx, bucket)
 	if err != nil {
 		return pi, err

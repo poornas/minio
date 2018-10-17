@@ -31,8 +31,6 @@ import (
 
 	"github.com/minio/minio/cmd/logger"
 	mioutil "github.com/minio/minio/pkg/ioutil"
-
-	"github.com/minio/minio/pkg/hash"
 )
 
 // Returns EXPORT/.minio.sys/multipart/SHA256/UPLOADID
@@ -259,7 +257,7 @@ func (fs *FSObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 		return pi, toObjectErr(err)
 	}
 
-	partInfo, err := fs.PutObjectPart(ctx, dstBucket, dstObject, uploadID, partID, srcInfo.Reader, dstOpts)
+	partInfo, err := fs.PutObjectPart(ctx, dstBucket, dstObject, uploadID, partID, NewPutObjectReader(srcInfo.Reader), dstOpts)
 	if err != nil {
 		return pi, toObjectErr(err, dstBucket, dstObject)
 	}
@@ -271,7 +269,8 @@ func (fs *FSObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 // an ongoing multipart transaction. Internally incoming data is
 // written to '.minio.sys/tmp' location and safely renamed to
 // '.minio.sys/multipart' for reach parts.
-func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *hash.Reader, opts ObjectOptions) (pi PartInfo, e error) {
+func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *PutObjectReader, opts ObjectOptions) (pi PartInfo, e error) {
+	data := r.DataReader
 	if err := checkPutObjectPartArgs(ctx, bucket, object, fs); err != nil {
 		return pi, toObjectErr(err, bucket)
 	}
@@ -321,8 +320,14 @@ func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	// PutObjectPart succeeds then there would be nothing to
 	// delete in which case we just ignore the error.
 	defer fsRemoveFile(ctx, tmpPartPath)
-
+	//TODO: KP
 	etag := hex.EncodeToString(data.MD5Current())
+	if opts.ServerSideEncryption != nil {
+		if encMD5Sum, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
+			etag = encMD5Sum
+			fmt.Println("encMD5Sum :", encMD5Sum)
+		}
+	}
 	if etag == "" {
 		etag = GenETag()
 	}

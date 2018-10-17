@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -32,6 +33,7 @@ import (
 	"github.com/minio/minio-go/pkg/encrypt"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/ioutil"
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/minio/sio"
@@ -190,7 +192,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 		objectKey := crypto.GenerateKey(key, rand.Reader)
 		sealedKey = objectKey.Seal(key, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
 		crypto.S3.CreateMetadata(metadata, globalKMSKeyID, encKey, sealedKey)
-		//saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+		saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 		return objectKey[:], nil
 	}
 	var extKey [32]byte
@@ -198,7 +200,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 	objectKey := crypto.GenerateKey(extKey, rand.Reader)
 	sealedKey = objectKey.Seal(extKey, crypto.GenerateIV(rand.Reader), crypto.SSEC.String(), bucket, object)
 	crypto.SSEC.CreateMetadata(metadata, sealedKey)
-	//saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+	saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 	return objectKey[:], nil
 }
 
@@ -223,7 +225,9 @@ func newEncryptReader(content io.Reader, key []byte, bucket, object string, meta
 	if err != nil {
 		return nil, err
 	}
-
+	if hReader, ok := content.(*hash.Reader); ok {
+		hReader.SetEncryptionKey(objectEncryptionKey)
+	}
 	reader, err := sio.EncryptReader(content, sio.Config{Key: objectEncryptionKey[:], MinVersion: sio.Version20})
 	if err != nil {
 		return nil, crypto.ErrInvalidCustomerKey
@@ -942,10 +946,10 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 	if len(objInfo.ETag) == 32 {
 		return objInfo.ETag
 	}
-	encBytes, err := hex.DecodeString(objInfo.ETag)
-	if err != nil {
-		return objInfo.ETag
-	}
+	// encBytes, err := hex.DecodeString(objInfo.ETag)
+	// if err != nil {
+	// 	return objInfo.ETag
+	// }
 	if crypto.SSECopy.IsRequested(headers) {
 		key, err = crypto.SSECopy.ParseHTTP(headers)
 		if err != nil {
@@ -960,13 +964,32 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 	if err != nil {
 		return objInfo.ETag
 	}
-	var objectKey crypto.ObjectKey
-	copy(objectKey[:], objectEncryptionKey)
+	// var objectKey crypto.ObjectKey
+	// copy(objectKey[:], objectEncryptionKey)
 
+	// etagBytes, err := objectKey.UnsealETag(encBytes)
+	// if err != nil {
+	// 	return objInfo.ETag
+	// }
+	// fmt.Println("getDecryptedETag correctly decrypted to.......", hex.EncodeToString(etagBytes))
+	// return hex.EncodeToString(etagBytes)
+	return tryDecryptETag(objectEncryptionKey, objInfo.ETag)
+}
+
+func tryDecryptETag(key []byte, encryptedETag string) string {
+	var objectKey crypto.ObjectKey
+	copy(objectKey[:], key)
+	encBytes, err := hex.DecodeString(encryptedETag)
+	if err != nil {
+		fmt.Println("#1", err)
+		return encryptedETag
+	}
 	etagBytes, err := objectKey.UnsealETag(encBytes)
 	if err != nil {
-		return objInfo.ETag
+		fmt.Println("#2", err)
+		return encryptedETag
 	}
+	fmt.Println("getDecryptedETag correctly decrypted to.......", hex.EncodeToString(etagBytes))
 	return hex.EncodeToString(etagBytes)
 }
 

@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 
@@ -33,6 +34,7 @@ import (
 )
 
 var errNestedReader = errors.New("Nesting of Reader detected, not allowed")
+var errEmptyEncryptionKey = errors.New("Encryption key not set")
 
 // Reader writes what it reads from an io.Reader to an MD5 and SHA256 hash.Hash.
 // Reader verifies that the content of the io.Reader matches the expected checksums.
@@ -146,11 +148,13 @@ func (r *Reader) SHA256HexString() string {
 // equal to the ones specified when creating the Reader.
 func (r *Reader) Verify() error {
 	if r.sha256Hash != nil && len(r.sha256sum) > 0 {
+		fmt.Println("verifying.... shasum..")
 		if sum := r.sha256Hash.Sum(nil); !bytes.Equal(r.sha256sum, sum) {
 			return SHA256Mismatch{hex.EncodeToString(r.sha256sum), hex.EncodeToString(sum)}
 		}
 	}
 	if len(r.md5sum) > 0 {
+		fmt.Println("verifying.... md5sum..")
 		if sum := r.md5Hash.Sum(nil); !bytes.Equal(r.md5sum, sum) {
 			return BadDigest{hex.EncodeToString(r.md5sum), hex.EncodeToString(sum)}
 		}
@@ -158,16 +162,27 @@ func (r *Reader) Verify() error {
 	return nil
 }
 
-func (r *Reader) SetEncryptionKey(key [32]byte) {
-	r.encryptionKey = key
+// SetEncryptionKey sets an optional encryption key
+func (r *Reader) SetEncryptionKey(key []byte) {
+	copy(r.encryptionKey[:], key)
+	fmt.Println("enc key set to....", r.encryptionKey, ":orig in", key)
 }
 
-func (r *Reader) EncryptedMD5Sum() string {
+// EncryptedMD5Sum returns encrypted MD5 sum if an encryption key is set.
+func (r *Reader) EncryptedMD5Sum() (string, error) {
+	fmt.Println("object enc key", r.encryptionKey)
+	var emptyKey [32]byte
+	if bytes.Equal(r.encryptionKey[:], emptyKey[:]) {
+		fmt.Println("should see this")
+		return "", errEmptyEncryptionKey
+	}
+	fmt.Println("r.md5SDum...", r.md5sum)
 	var buffer bytes.Buffer
 	mac := hmac.New(sha256.New, r.encryptionKey[:])
 	mac.Write([]byte("SSE-etag"))
-	if _, err := sio.Encrypt(&buffer, bytes.NewReader(r.md5sum), sio.Config{Key: mac.Sum(nil)}); err != nil {
+	if _, err := sio.Encrypt(&buffer, bytes.NewReader(r.MD5Current()), sio.Config{Key: mac.Sum(nil)}); err != nil {
 		logger.CriticalIf(context.Background(), errors.New("Unable to encrypt etag using the object key"))
 	}
-	return hex.EncodeToString(buffer.Bytes())
+	fmt.Println("enc....md5==?", hex.EncodeToString(buffer.Bytes()))
+	return hex.EncodeToString(buffer.Bytes()), nil
 }
