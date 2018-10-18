@@ -46,6 +46,7 @@ type Reader struct {
 	md5sum, sha256sum   []byte // Byte values of md5sum, sha256sum of client sent values.
 	md5Hash, sha256Hash hash.Hash
 	encryptionKey       [32]byte
+	origReader          bool
 }
 
 // NewReader returns a new hash Reader which computes the MD5 sum and
@@ -54,6 +55,7 @@ func NewReader(src io.Reader, size int64, md5Hex, sha256Hex string, actualSize i
 	if _, ok := src.(*Reader); ok {
 		return nil, errNestedReader
 	}
+	fmt.Println(">             md5sum from client::..", md5Hex, "shasum::", sha256Hex)
 
 	sha256sum, err := hex.DecodeString(sha256Hex)
 	if err != nil {
@@ -94,6 +96,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 
 	// At io.EOF verify if the checksums are right.
 	if err == io.EOF {
+		fmt.Println("ATEOF reader::::", r, r.md5sum)
 		if cerr := r.Verify(); cerr != nil {
 			return 0, cerr
 		}
@@ -121,7 +124,9 @@ func (r *Reader) MD5() []byte {
 // NOTE: Calling this function multiple times might yield
 // different results if they are intermixed with Reader.
 func (r *Reader) MD5Current() []byte {
-	return r.md5Hash.Sum(nil)
+	x := r.md5Hash.Sum(nil)
+	fmt.Println("md5current of reader r", r, " is ", hex.EncodeToString(x))
+	return x
 }
 
 // SHA256 - returns byte sha256 value
@@ -147,6 +152,7 @@ func (r *Reader) SHA256HexString() string {
 // Verify verifies if the computed MD5 sum and SHA256 sum are
 // equal to the ones specified when creating the Reader.
 func (r *Reader) Verify() error {
+
 	if r.sha256Hash != nil && len(r.sha256sum) > 0 {
 		fmt.Println("verifying.... shasum..")
 		if sum := r.sha256Hash.Sum(nil); !bytes.Equal(r.sha256sum, sum) {
@@ -154,10 +160,11 @@ func (r *Reader) Verify() error {
 		}
 	}
 	if len(r.md5sum) > 0 {
-		fmt.Println("verifying.... md5sum..")
+		fmt.Println("verifying.... md5sum from client::..", r.md5sum)
 		if sum := r.md5Hash.Sum(nil); !bytes.Equal(r.md5sum, sum) {
 			return BadDigest{hex.EncodeToString(r.md5sum), hex.EncodeToString(sum)}
 		}
+		fmt.Println("successful md5sum check of ", r.src)
 	}
 	return nil
 }
@@ -166,23 +173,28 @@ func (r *Reader) Verify() error {
 func (r *Reader) SetEncryptionKey(key []byte) {
 	copy(r.encryptionKey[:], key)
 	fmt.Println("enc key set to....", r.encryptionKey, ":orig in", key)
+	r.origReader = true
 }
 
 // EncryptedMD5Sum returns encrypted MD5 sum if an encryption key is set.
 func (r *Reader) EncryptedMD5Sum() (string, error) {
-	fmt.Println("object enc key", r.encryptionKey)
+	fmt.Println("object enc key used to encrypt md5L:::::::::::::::::::", r.encryptionKey, " is orignreadfer?", r.origReader)
 	var emptyKey [32]byte
 	if bytes.Equal(r.encryptionKey[:], emptyKey[:]) {
 		fmt.Println("should see this")
 		return "", errEmptyEncryptionKey
 	}
-	fmt.Println("r.md5SDum...", r.md5sum)
+	//md5sum := r.md5sum
+	//	if len(md5sum) == 0 {
+	md5sum := r.MD5Current()
+	fmt.Println("now md5sum is........................", hex.EncodeToString(md5sum))
+	//	}
 	var buffer bytes.Buffer
 	mac := hmac.New(sha256.New, r.encryptionKey[:])
 	mac.Write([]byte("SSE-etag"))
-	if _, err := sio.Encrypt(&buffer, bytes.NewReader(r.MD5Current()), sio.Config{Key: mac.Sum(nil)}); err != nil {
+	if _, err := sio.Encrypt(&buffer, bytes.NewReader(md5sum), sio.Config{Key: mac.Sum(nil)}); err != nil {
 		logger.CriticalIf(context.Background(), errors.New("Unable to encrypt etag using the object key"))
 	}
-	fmt.Println("enc....md5==?", hex.EncodeToString(buffer.Bytes()))
+	fmt.Println("encoded ....md5==?", string(buffer.Bytes()))
 	return hex.EncodeToString(buffer.Bytes()), nil
 }

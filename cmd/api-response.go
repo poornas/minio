@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -469,6 +470,7 @@ func generateListPartsResponse(partsInfo ListPartsInfo) ListPartsResponse {
 		newPart := Part{}
 		newPart.PartNumber = part.PartNumber
 		newPart.ETag = "\"" + part.ETag + "\""
+		fmt.Println("newpart etag........................", part.ETag)
 		newPart.Size = part.Size
 		newPart.LastModified = part.LastModified.UTC().Format(timeFormatAMZLong)
 		listPartsResponse.Parts[index] = newPart

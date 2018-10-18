@@ -434,7 +434,12 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	xlMeta.Stat.ModTime = UTCNow()
 
 	md5hex := hex.EncodeToString(data.MD5Current())
-
+	if opts.ServerSideEncryption != nil {
+		if encMD5Sum, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
+			md5hex = encMD5Sum
+			fmt.Println("xl pop encMD5Sum replacing with ****:", encMD5Sum)
+		}
+	}
 	// Add the current part.
 	xlMeta.AddObjectPart(partID, partSuffix, md5hex, n, data.ActualSize())
 

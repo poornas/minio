@@ -29,6 +29,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minio/minio-go/pkg/encrypt"
+
 	"github.com/minio/minio/cmd/logger"
 	mioutil "github.com/minio/minio/pkg/ioutil"
 )
@@ -321,17 +323,25 @@ func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	// delete in which case we just ignore the error.
 	defer fsRemoveFile(ctx, tmpPartPath)
 	//TODO: KP
-	etag := hex.EncodeToString(data.MD5Current())
+	etag := hex.EncodeToString(r.DataReader.MD5Current())
+	etagPath := etag
+	//fmt.Println("etag from datarerader------>", etag)
 	if opts.ServerSideEncryption != nil {
 		if encMD5Sum, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
 			etag = encMD5Sum
-			fmt.Println("encMD5Sum :", encMD5Sum)
+			fmt.Println("encMD5Sum fsmult :", encMD5Sum)
+		}
+		if opts.ServerSideEncryption.Type() == encrypt.SSEC {
+			etagPath = etag[len(etag)-32:]
 		}
 	}
+	// } else {
+	// 	etag = hex.EncodeToString(r.OrigReader.MD5Current())
+	// }
 	if etag == "" {
 		etag = GenETag()
 	}
-	partPath := pathJoin(uploadIDDir, fs.encodePartFile(partID, etag, data.ActualSize()))
+	partPath := pathJoin(uploadIDDir, fs.encodePartFile(partID, etagPath, data.ActualSize()))
 
 	if err = fsRenameFile(ctx, tmpPartPath, partPath); err != nil {
 		return pi, toObjectErr(err, minioMetaMultipartBucket, partPath)

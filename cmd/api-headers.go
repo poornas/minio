@@ -76,6 +76,7 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 
 	// Set Etag if available.
 	if objInfo.ETag != "" {
+		fmt.Println("etag,,,,,", objInfo.ETag)
 		w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
 	}
 

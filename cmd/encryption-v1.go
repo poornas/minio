@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"reflect"
 	"strconv"
 
 	"github.com/minio/minio-go/pkg/encrypt"
@@ -192,7 +193,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 		objectKey := crypto.GenerateKey(key, rand.Reader)
 		sealedKey = objectKey.Seal(key, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
 		crypto.S3.CreateMetadata(metadata, globalKMSKeyID, encKey, sealedKey)
-		saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+		//	saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 		return objectKey[:], nil
 	}
 	var extKey [32]byte
@@ -200,7 +201,7 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 	objectKey := crypto.GenerateKey(extKey, rand.Reader)
 	sealedKey = objectKey.Seal(extKey, crypto.GenerateIV(rand.Reader), crypto.SSEC.String(), bucket, object)
 	crypto.SSEC.CreateMetadata(metadata, sealedKey)
-	saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
+	//	saveEncryptedETagMetadata(metadata, contentMD5Sum, objectKey)
 	return objectKey[:], nil
 }
 
@@ -208,25 +209,48 @@ func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]s
 // compatibility with AWS S3 which returns MD5Sum of content in the response header as ETag for SSE-S3 encrypted objects.
 // Extend same behavior to SSE-C encrypted objects so that we have original content's MD5Sum for copy
 // https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
-func saveEncryptedETagMetadata(metadata map[string]string, contentMD5Sum string, objectKey crypto.ObjectKey) error {
+// func saveEncryptedETagMetadata(metadata map[string]string, contentMD5Sum string, objectKey crypto.ObjectKey) error {
+// 	// encrypt ETag if contentMD5Sum is passed.
+// 	if contentMD5Sum != "" && len(contentMD5Sum) <= 32 {
+// 		md5Bytes, err := hex.DecodeString(contentMD5Sum)
+// 		if err != nil {
+// 			return err
+// 		}
+// 		metadata["etag"] = hex.EncodeToString(objectKey.SealETag(md5Bytes))
+// 	}
+// 	return nil
+// }
+
+// For SSE encrypted objects, encrypt client provided MD5Sum and save in the ETag field. This is required for
+// compatibility with AWS S3 which returns MD5Sum of content in the response header as ETag for SSE-S3 encrypted objects.
+// Extend same behavior to SSE-C encrypted objects so that we have original content's MD5Sum for copy
+// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
+func getEncryptedETag(etag string, key []byte) string {
 	// encrypt ETag if contentMD5Sum is passed.
-	if contentMD5Sum != "" && len(contentMD5Sum) <= 32 {
-		md5Bytes, err := hex.DecodeString(contentMD5Sum)
-		if err != nil {
-			return err
-		}
-		metadata["etag"] = hex.EncodeToString(objectKey.SealETag(md5Bytes))
+	if len(etag) <= 32 {
+		return etag
 	}
-	return nil
+	md5Bytes, err := hex.DecodeString(etag)
+	if err != nil {
+		return etag
+	}
+	var objectKey crypto.ObjectKey
+	copy(objectKey[:], key)
+	return hex.EncodeToString(objectKey.SealETag(md5Bytes))
 }
 
 func newEncryptReader(content io.Reader, key []byte, bucket, object string, metadata map[string]string, sseS3 bool, contentMD5Sum string) (io.Reader, error) {
 	objectEncryptionKey, err := newEncryptMetadata(key, bucket, object, metadata, sseS3, contentMD5Sum)
 	if err != nil {
+		fmt.Println("oerr...##31", err)
 		return nil, err
 	}
-	if hReader, ok := content.(*hash.Reader); ok {
+	hReader, ok := content.(*hash.Reader)
+	if ok {
+		fmt.Println("setting encryption key.....................................................on reader")
 		hReader.SetEncryptionKey(objectEncryptionKey)
+	} else {
+		fmt.Println(reflect.TypeOf(content), "<-----======")
 	}
 	reader, err := sio.EncryptReader(content, sio.Config{Key: objectEncryptionKey[:], MinVersion: sio.Version20})
 	if err != nil {
@@ -950,6 +974,9 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 	// if err != nil {
 	// 	return objInfo.ETag
 	// }
+	if crypto.IsMultiPart(objInfo.UserDefined) {
+		return objInfo.ETag
+	}
 	if crypto.SSECopy.IsRequested(headers) {
 		key, err = crypto.SSECopy.ParseHTTP(headers)
 		if err != nil {
@@ -973,12 +1000,16 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 	// }
 	// fmt.Println("getDecryptedETag correctly decrypted to.......", hex.EncodeToString(etagBytes))
 	// return hex.EncodeToString(etagBytes)
-	return tryDecryptETag(objectEncryptionKey, objInfo.ETag)
+	return tryDecryptETag(objectEncryptionKey, objInfo.ETag, false)
 }
 
-func tryDecryptETag(key []byte, encryptedETag string) string {
+func tryDecryptETag(key []byte, encryptedETag string, ssec bool) string {
+	if ssec {
+		return encryptedETag[len(encryptedETag)-32:]
+	}
 	var objectKey crypto.ObjectKey
 	copy(objectKey[:], key)
+	fmt.Println("trying to decrypt with key.....", objectKey, "the string ::: ", encryptedETag)
 	encBytes, err := hex.DecodeString(encryptedETag)
 	if err != nil {
 		fmt.Println("#1", err)
@@ -1175,9 +1206,13 @@ func DecryptObjectInfo(info *ObjectInfo, headers http.Header) (encrypted bool, e
 			return
 		}
 		_, err = info.DecryptedSize()
+		fmt.Println("etag before dec...", info.ETag, info.UserDefined, "multipart?", crypto.IsMultiPart(info.UserDefined))
 		if crypto.IsEncrypted(info.UserDefined) && !crypto.IsMultiPart(info.UserDefined) {
+			fmt.Println("etag decrypt...")
 			info.ETag = getDecryptedETag(headers, *info, false)
 		}
+		fmt.Println("etag decrypted...", info.ETag)
+
 	}
 	return
 }

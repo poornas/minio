@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -755,8 +756,12 @@ func (xl xlObjects) putObject(ctx context.Context, bucket string, object string,
 
 	// Save additional erasureMetadata.
 	modTime := UTCNow()
-	if _, ok := metadata["etag"]; !ok || opts.ServerSideEncryption == nil {
-		metadata["etag"] = hex.EncodeToString(r.OrigReader.MD5Current())
+	metadata["etag"] = hex.EncodeToString(data.MD5Current())
+	if opts.ServerSideEncryption == nil {
+		if encMD5Sum, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
+			metadata["etag"] = encMD5Sum
+			fmt.Println("xl encMD5Sum replacing with ****:", encMD5Sum)
+		}
 	}
 	// Guess content-type from the extension if possible.
 	if metadata["content-type"] == "" {
