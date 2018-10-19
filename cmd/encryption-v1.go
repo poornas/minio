@@ -445,7 +445,7 @@ func DecryptBlocksRequestR(inputReader io.Reader, h http.Header, offset,
 	io.Reader, error) {
 
 	bucket, object := oi.Bucket, oi.Name
-
+	fmt.Println("offset ", offset, "length ", length, "seqnum ", seqNumber, "OI.SIZE", oi.Size, "partstart: ", partStart)
 	// Single part case
 	if !isEncryptedMultipart(oi) {
 		var reader io.Reader
@@ -460,9 +460,10 @@ func DecryptBlocksRequestR(inputReader io.Reader, h http.Header, offset,
 		}
 		return reader, nil
 	}
-
+	fmt.Println("came to multipart...part")
 	partDecRelOffset := int64(seqNumber) * sseDAREPackageBlockSize
 	partEncRelOffset := int64(seqNumber) * (sseDAREPackageBlockSize + sseDAREPackageMetaSize)
+	fmt.Println("came to multipart...part  partDecRelOffset=", partDecRelOffset, "  partEncRelOffset=", partEncRelOffset)
 
 	w := &DecryptBlocksReader{
 		reader:            inputReader,
@@ -578,6 +579,7 @@ func (d *DecryptBlocksReader) buildDecrypter(partID int) error {
 	// Limit the reader, so the decryptor doesnt receive bytes
 	// from the next part (different DARE stream)
 	encLenToRead := d.parts[d.partIndex].Size - d.partEncRelOffset
+	fmt.Println("PARTID: ", partID, "encLentoread=", encLenToRead, " becuse d.parts[d.partIndex].Size =", d.parts[d.partIndex].Size, "- d.partEncRelOffset =", d.partEncRelOffset)
 	decrypter, err := newDecryptReaderWithObjectKey(io.LimitReader(d.reader, encLenToRead), partEncryptionKey, d.startSeqNum, m)
 	if err != nil {
 		return err
@@ -591,19 +593,22 @@ func (d *DecryptBlocksReader) Read(p []byte) (int, error) {
 	var err error
 	var n1 int
 	decPartSize, _ := sio.DecryptedSize(uint64(d.parts[d.partIndex].Size))
+	fmt.Println("decrypted part size::: ", decPartSize, d.partDecRelOffset)
 	unreadPartLen := int64(decPartSize) - d.partDecRelOffset
+	fmt.Println("unread part length::;", unreadPartLen, "???plen....?", len(p))
 	if int64(len(p)) < unreadPartLen {
 		n1, err = d.decrypter.Read(p)
 		if err != nil {
 			return 0, err
 		}
+		fmt.Println("read ::::", n1, "prev decreloffset=", d.partDecRelOffset)
 		d.partDecRelOffset += int64(n1)
 	} else {
 		n1, err = io.ReadFull(d.decrypter, p[:unreadPartLen])
 		if err != nil {
 			return 0, err
 		}
-
+		fmt.Println("read remaining block of size:::", n1, " of unreadpartlen::", unreadPartLen)
 		// We should now proceed to next part, reset all
 		// values appropriately.
 		d.partEncRelOffset = 0
@@ -619,15 +624,19 @@ func (d *DecryptBlocksReader) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-
+		fmt.Println("read decrypter of partid ", d.parts[d.partIndex].Number)
+		fmt.Println("n1.....shows........**", n1)
 		n1, err = d.decrypter.Read(p[n1:])
 		if err != nil {
 			return 0, err
 		}
+		fmt.Println("read n1", n1)
 
 		d.partDecRelOffset += int64(n1)
-	}
+		fmt.Println("	d.partDecRelOffset is now", d.partDecRelOffset)
 
+	}
+	fmt.Println("decrypter read returned data of length:: ", len(p))
 	return len(p), nil
 }
 
@@ -768,6 +777,7 @@ func (w *DecryptBlocksWriter) Close() error {
 // all parts starting from part-1.
 func DecryptAllBlocksCopyRequest(client io.Writer, r *http.Request, bucket, object string, objInfo ObjectInfo) (io.WriteCloser, int64, error) {
 	w, _, size, err := DecryptBlocksRequest(client, r, bucket, object, 0, objInfo.Size, objInfo, true)
+	fmt.Println("size returned by DecryptAllBlocksCopyRequest=", size)
 	return w, size, err
 }
 
@@ -862,7 +872,7 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, bucket, object stri
 
 // getEncryptedMultipartsOffsetLength - fetch sequence number, encrypted start offset and encrypted length.
 func getEncryptedMultipartsOffsetLength(offset, length int64, obj ObjectInfo) (uint32, int64, int64) {
-
+	fmt.Println("getEncryptedMultipartsOffsetLength")
 	// Calculate encrypted offset of a multipart object
 	computeEncOffset := func(off int64, obj ObjectInfo) (seqNumber uint32, encryptedOffset int64, err error) {
 		var curPartEndOffset uint64

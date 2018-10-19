@@ -758,7 +758,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 	defer gr.Close()
 	srcInfo := gr.ObjInfo
-	fmt.Println("CO   source etag:::", srcInfo.ETag, "gr...size?? ", gr.Size)
+	fmt.Println("CO   source etag:::", srcInfo.ETag, srcInfo.Size)
 	// Verify before x-amz-copy-source preconditions before continuing with CopyObject.
 	if checkCopyObjectPreconditions(w, r, srcInfo) {
 		return
