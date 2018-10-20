@@ -429,6 +429,8 @@ func (l *s3EncObjects) ListMultipartUploads(ctx context.Context, bucket string, 
 	lmi.KeyMarker = keyMarker
 	lmi.Prefix = prefix
 	lmi.Delimiter = delimiter
+	lmi.NextKeyMarker = prefix
+	lmi.UploadIDMarker = uploadIDMarker
 	uploadsMap = make(map[string]string)
 	for {
 		loi, err := l.s3Objects.ListObjectsV2(ctx, bucket, prefix, continuationToken, delimiter, 1000, false, startAfter)
@@ -615,10 +617,23 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	}
 	lpi.Parts = make([]minio.PartInfo, 0)
 	lpi.UserDefined = dm.Meta
+	lpi.Bucket = bucket
+	lpi.Object = object
+	lpi.UploadID = uploadID
+	lpi.MaxParts = maxParts
+	lpi.PartNumberMarker = partNumberMarker
+
+	if maxParts == 0 {
+		return lpi, nil
+	}
 
 	var continuationToken, startAfter, delimiter string
+	var loi minio.ListObjectsV2Info
+	if partNumberMarker > 0 {
+		startAfter = path.Join(uploadPrefix, strconv.Itoa(partNumberMarker))
+	}
 	for {
-		loi, err := l.s3Objects.ListObjectsV2(ctx, bucket, uploadPrefix, continuationToken, delimiter, 1000, false, startAfter)
+		loi, err = l.s3Objects.ListObjectsV2(ctx, bucket, uploadPrefix, continuationToken, delimiter, 1000, false, startAfter)
 		if err != nil {
 			return lpi, err
 		}
@@ -646,13 +661,17 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 				lpi.Parts = append(lpi.Parts, pi)
 			}
 			if len(lpi.Parts) == maxParts {
-				return lpi, nil
+				break
 			}
 		}
 		continuationToken = loi.NextContinuationToken
 		if !loi.IsTruncated {
 			break
 		}
+	}
+	if len(loi.Objects) > len(lpi.Parts) && len(lpi.Parts) > 0 {
+		lpi.IsTruncated = true
+		lpi.NextPartNumberMarker = lpi.Parts[len(lpi.Parts)-1].PartNumber
 	}
 	return lpi, nil
 }

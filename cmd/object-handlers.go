@@ -840,12 +840,6 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-<<<<<<< HEAD
-=======
-	// Save the original size for later use when we want to copy
-	// encrypted file into an unencrypted one.
-	size := srcInfo.Size
->>>>>>> Add double encryption at S3 gateway.
 	var encMetadata = make(map[string]string)
 	if objectAPI.IsEncryptionSupported() && !srcInfo.IsCompressed() {
 		// Encryption parameters not applicable for this object.
