@@ -35,6 +35,7 @@ import (
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/dns"
+	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/ioutil"
 	"github.com/minio/minio/pkg/wildcard"
 	"github.com/skyrings/skyring-common/tools/uuid"
@@ -596,4 +597,50 @@ func (g *GetObjectReader) Read(p []byte) (n int, err error) {
 		g.Close()
 	}
 	return
+}
+
+// PutObjReaders is a type that wraps sio.EncryptReader and
+// underlying hash.Reader in a struct
+type PutObjReaders struct {
+	*hash.Reader              // actual data stream
+	rawReader    *hash.Reader // original data stream
+}
+
+// Size returns the absolute number of bytes the Reader
+// will return during reading. It returns -1 for unlimited
+// data.
+func (p *PutObjReaders) Size() int64 {
+	return p.Reader.Size()
+}
+
+// NewPutObjReaders returns a new PutObjReaders and holds
+// reference to underlying data stream from client and the encrypted
+// data reader
+func NewPutObjReaders(rawReader *hash.Reader, encReader *hash.Reader, encKey []byte) *PutObjReaders {
+	p := PutObjReaders{Reader: rawReader, rawReader: rawReader}
+	rawReader.SetEncryptionKey(encKey)
+	if encReader != nil {
+		p.Reader = encReader
+	}
+	return &p
+}
+
+// EncryptedMD5Sum returns encrypted md5sum,actual md5sum and error
+func (p *PutObjReaders) EncryptedMD5Sum() (string, string, error) {
+	return p.rawReader.EncryptedMD5Sum()
+}
+
+// UnsealETagFn takes an object encryption key and returns a
+// ETag validation function and a function that returns encrypted ETag
+func UnsealETagFn(key []byte, ssec bool) (opts ObjectOptions) {
+	fn1 := func(clntEtag, bkETag string) bool {
+		if ssec {
+			return clntEtag == bkETag[len(bkETag)-32:]
+		}
+		return tryDecryptETag(key, bkETag, ssec) == clntEtag
+	}
+	fn2 := func(etag string) string {
+		return getEncryptedETag(etag, key)
+	}
+	return ObjectOptions{ValidateETagsFn: fn1, GetEncryptedETagFn: fn2}
 }
