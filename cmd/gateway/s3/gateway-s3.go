@@ -421,8 +421,10 @@ func (l *s3Objects) GetObjectInfo(ctx context.Context, bucket string, object str
 // PutObject creates a new object with the incoming data,
 func (l *s3Objects) PutObject(ctx context.Context, bucket string, object string, r *minio.PutObjectReader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	data := r.DataReader
+	//fmt.Println("opts.serversideENc...", opts.ServerSideEncryption, "DATA...", data, object)
 	oi, err := l.Client.PutObject(bucket, object, data, data.Size(), data.MD5Base64String(), data.SHA256HexString(), minio.ToMinioClientMetadata(metadata), opts.ServerSideEncryption)
 	if err != nil {
+		//fmt.Println("actual error from backlend..", err)
 		return objInfo, minio.ErrorRespToObjectError(err, bucket, object)
 	}
 	// On success, populate the key & metadata so they are present in the notification
@@ -529,7 +531,7 @@ func (l *s3Objects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, de
 }
 
 // ListObjectParts returns all object parts for specified object in specified bucket
-func (l *s3Objects) ListObjectParts(ctx context.Context, bucket string, object string, uploadID string, partNumberMarker int, maxParts int) (lpi minio.ListPartsInfo, e error) {
+func (l *s3Objects) ListObjectParts(ctx context.Context, bucket string, object string, uploadID string, partNumberMarker int, maxParts int, opts minio.ObjectOptions) (lpi minio.ListPartsInfo, e error) {
 	result, err := l.Client.ListObjectParts(bucket, object, uploadID, partNumberMarker, maxParts)
 	if err != nil {
 		return lpi, err

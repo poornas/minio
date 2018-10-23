@@ -28,9 +28,13 @@ import (
 
 // ObjectOptions represents object options for ObjectLayer operations
 type ObjectOptions struct {
-	ServerSideEncryption encrypt.ServerSide
-	ValidateETagsFn      ValidateETagsFn
-	GetEncryptedETagFn   GetEncryptedETagFn
+	ServerSideEncryption   encrypt.ServerSide
+	ValidateETagsFn        ValidateETagsFn
+	CreateEncryptedETagFn  CreateEncryptedETagFn
+	GetEncryptedETagFn     GetEncryptedETagFn
+	GetDecryptedETagFn     GetDecryptedETagFn
+	SetEncryptedETagMetaFn SetEncryptedETagMetaFn
+	GetEncryptedETagMetaFn GetEncryptedETagMetaFn
 }
 
 // LockType represents required locking for ObjectLayer operations
@@ -47,6 +51,18 @@ type ValidateETagsFn func(string, string) bool
 
 // GetEncryptedETagFn type gets encrypted ETag
 type GetEncryptedETagFn func(string) string
+
+// CreateEncryptedETagFn type creates encrypted MD5Sum of content MD5Sum
+type CreateEncryptedETagFn func() (string, string, error)
+
+// GetDecryptedETagFn type gets decrypted ETag from encrypted ETag
+type GetDecryptedETagFn func(string) string
+
+// SetEncryptedETagMetaFn type sets encrypted ETag in metadata for gateway
+type SetEncryptedETagMetaFn func(map[string]string) map[string]string
+
+// GetEncryptedETagMetaFn type gets encrypted ETag from ObjectInfo for gateway
+type GetEncryptedETagMetaFn func(o ObjectInfo) string
 
 // ObjectLayer implements primitives for object API layer.
 type ObjectLayer interface {
@@ -83,7 +99,7 @@ type ObjectLayer interface {
 	CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, uploadID string, partID int,
 		startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (info PartInfo, err error)
 	PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjectReader, opts ObjectOptions) (info PartInfo, err error)
-	ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker int, maxParts int) (result ListPartsInfo, err error)
+	ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker int, maxParts int, opts ObjectOptions) (result ListPartsInfo, err error)
 	AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) error
 	CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (objInfo ObjectInfo, err error)
 

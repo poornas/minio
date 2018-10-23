@@ -214,7 +214,6 @@ func newEncryptReader(content io.Reader, key []byte, bucket, object string, meta
 	if err != nil {
 		return nil, crypto.ErrInvalidCustomerKey
 	}
-
 	return reader, nil
 }
 
@@ -288,6 +287,7 @@ func decryptObjectInfo(key []byte, bucket, object string, metadata map[string]st
 		if err != nil {
 			return nil, err
 		}
+
 		var objectKey crypto.ObjectKey
 		if err = objectKey.Unseal(extKey, sealedKey, crypto.S3.String(), bucket, object); err != nil {
 			return nil, err
@@ -924,6 +924,13 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 		key [32]byte
 		err error
 	)
+
+	// for gateway double encryption use encrypted MD5Sum saved as metadata
+	_, ok := objInfo.UserDefined[minioInternalMD5Sum]
+
+	if ok {
+		objInfo.ETag = objInfo.UserDefined[minioInternalMD5Sum]
+	}
 	// If ETag is contentMD5Sum return it as is.
 	if len(objInfo.ETag) == 32 {
 		return objInfo.ETag

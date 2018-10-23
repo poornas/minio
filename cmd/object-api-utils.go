@@ -52,6 +52,8 @@ const (
 	minioMetaTmpBucket = minioMetaBucket + "/tmp"
 	// DNS separator (period), used for bucket name validation.
 	dnsDelimiter = "."
+	// Minio internal ETag for gateway with client send MD5Sum
+	minioInternalMD5Sum = ReservedMetadataPrefix + "Etag"
 )
 
 // isMinioBucket returns true if given bucket is a Minio internal
@@ -233,11 +235,18 @@ func cleanMetadataKeys(metadata map[string]string, keyNames ...string) map[strin
 
 // Extracts etag value from the metadata.
 func extractETag(metadata map[string]string) string {
+	//	fmt.Println("\n metadata===>", metadata)
 	// md5Sum tag is kept for backward compatibility.
 	etag, ok := metadata["md5Sum"]
 	if !ok {
 		etag = metadata["etag"]
 	}
+	if GlobalGatewaySSE != nil {
+		if encEtag, ok := metadata["X-Amz-Meta-"+minioInternalMD5Sum]; ok {
+			etag = encEtag
+		}
+	}
+
 	// Success.
 	return etag
 }
@@ -613,6 +622,20 @@ func CleanMinioInternalMetadataKeys(metadata map[string]string) map[string]strin
 	return newMeta
 }
 
+// // CreateEncryptedETagMeta saves a new internal metadata key with encrypted Content-MD5
+// // sent in request header. This is required only for gateway double encryption
+// func CreateEncryptedETagMeta(r *PutObjectReader, metadata map[string]string) map[string]string {
+// 	if metadata == nil {
+// 		metadata = map[string]string{}
+// 	}
+// 	if GlobalGatewaySSE != nil {
+// 		if encMD5, _, err := r.OrigReader.EncryptedMD5Sum(); err == nil {
+// 			metadata[minioInternalMD5Sum] = encMD5
+// 		}
+// 	}
+// 	return metadata
+// }
+
 // PutObjectReader is a type that wraps sio.EncryptReader and
 // underlying hash.Reader in a struct
 type PutObjectReader struct {
@@ -646,5 +669,47 @@ func UnsealETagFn(key []byte, ssec bool) (opts ObjectOptions) {
 	fn2 := func(etag string) string {
 		return getEncryptedETag(etag, key)
 	}
-	return ObjectOptions{ValidateETagsFn: fn1, GetEncryptedETagFn: fn2}
+	fn3 := func(encEtag string) string {
+		if ssec {
+			return encEtag[len(encEtag)-32:]
+		}
+		return tryDecryptETag(key, encEtag, ssec)
+	}
+	return ObjectOptions{ValidateETagsFn: fn1, GetEncryptedETagFn: fn2, GetDecryptedETagFn: fn3}
+}
+
+// SetETagEncryptionOpts sets opts to a function that adds encrypted
+// etag as metadata for gateway encryption
+func (o *ObjectOptions) SetETagEncryptionOpts(p *PutObjectReader) {
+	if GlobalGatewaySSE != nil {
+		var f1 SetEncryptedETagMetaFn
+		if p != nil {
+			f1 = func(meta map[string]string) map[string]string {
+				if meta == nil {
+					meta = map[string]string{}
+				}
+				if encMD5Sum, _, err := p.OrigReader.EncryptedMD5Sum(); err == nil {
+					meta[minioInternalMD5Sum] = encMD5Sum
+				}
+				return meta
+			}
+		}
+
+		f2 := func(o ObjectInfo) string {
+			if v, ok := o.UserDefined[minioInternalMD5Sum]; ok {
+				return v
+			}
+			if v, ok := o.UserDefined["X-Amz-Meta-"+minioInternalMD5Sum]; ok {
+				return v
+			}
+			return o.ETag
+		}
+		var f3 CreateEncryptedETagFn
+		f3 = func() (string, string, error) {
+			return p.OrigReader.EncryptedMD5Sum()
+		}
+		o.SetEncryptedETagMetaFn = f1
+		o.GetEncryptedETagMetaFn = f2
+		o.CreateEncryptedETagFn = f3
+	}
 }

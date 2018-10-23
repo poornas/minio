@@ -167,6 +167,7 @@ func (r *Reader) EncryptedMD5Sum() (string, string, error) {
 	if bytes.Equal(r.encryptionKey[:], emptyKey[:]) {
 		return "", "", errEmptyEncryptionKey
 	}
+
 	md5curr := r.MD5Current()
 	return hex.EncodeToString(r.encryptionKey.SealETag(md5curr)), hex.EncodeToString(md5curr), nil
 }

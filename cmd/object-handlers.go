@@ -779,6 +779,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	gr, err := getObjectNInfo(ctx, srcBucket, srcObject, rs, r.Header, lock, getOpts)
+	//fmt.Println("GONI ,,...", gr, " >>.err", err)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -1255,7 +1256,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+			//fmt.Println("----------------------------------------------------------------------------------------------------------------")
 			pReader.DataReader = hashReader
+			opts.SetETagEncryptionOpts(pReader)
+
+			// metadata = CreateEncryptedETagMeta(pReader, metadata)
+			//fmt.Println("********meta==>", metadata, " md5hex that came in :::", md5hex)
+			//fmt.Println("----------------------------------------------------------------------------------------------------------------")
 		}
 	}
 
@@ -1607,7 +1614,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		return
 	}
 	if objectAPI.IsEncryptionSupported() && !srcInfo.IsCompressed() {
-		li, lerr := objectAPI.ListObjectParts(ctx, dstBucket, dstObject, uploadID, 0, 1)
+		li, lerr := objectAPI.ListObjectParts(ctx, dstBucket, dstObject, uploadID, 0, 1, dstOpts)
 		if lerr != nil {
 			writeErrorResponse(w, toAPIErrorCode(lerr), r.URL)
 			return
@@ -1793,8 +1800,18 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	var pipeReader *io.PipeReader
 	var pipeWriter *io.PipeWriter
 
+	// get encryption options
+	var opts ObjectOptions
+	if crypto.SSEC.IsRequested(r.Header) {
+		opts, err = putEncryptionOpts(r, bucket, object, nil)
+		if err != nil {
+			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
+		}
+	}
+
 	var li ListPartsInfo
-	li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
+	li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -1834,16 +1851,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-
-	// get encryption options
-	var opts ObjectOptions
-	if crypto.SSEC.IsRequested(r.Header) {
-		opts, err = putEncryptionOpts(r, bucket, object, nil)
-		if err != nil {
-			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-			return
-		}
-	}
 	pReader := NewPutObjectReader(hashReader)
 
 	// Deny if WORM is enabled
@@ -1857,12 +1864,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	isEncrypted := false
 	var objectEncryptionKey []byte
 	if objectAPI.IsEncryptionSupported() && !isCompressed {
-		var li ListPartsInfo
-		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
-		if err != nil {
-			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-			return
-		}
 		li.UserDefined = CleanMinioInternalMetadataKeys(li.UserDefined)
 		if crypto.IsEncrypted(li.UserDefined) {
 			if !crypto.SSEC.IsRequested(r.Header) && crypto.SSEC.IsEncrypted(li.UserDefined) {
@@ -1891,7 +1892,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
-
 			var partIDbin [4]byte
 			binary.LittleEndian.PutUint32(partIDbin[:], uint32(partID)) // marshal part ID
 
@@ -1912,6 +1912,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				return
 			}
 			pReader.DataReader = hashReader
+			opts.SetETagEncryptionOpts(pReader)
 		}
 	}
 
@@ -2021,7 +2022,9 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
-	listPartsInfo, err := objectAPI.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts)
+	var opts ObjectOptions
+	opts.SetETagEncryptionOpts(nil)
+	listPartsInfo, err := objectAPI.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -2030,7 +2033,7 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 	var ssec bool
 	if objectAPI.IsEncryptionSupported() {
 		var li ListPartsInfo
-		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
+		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1, opts)
 		if err != nil {
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
@@ -2124,7 +2127,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	var opts ObjectOptions
 	if objectAPI.IsEncryptionSupported() {
 		var li ListPartsInfo
-		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
+		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1, opts)
 		if err != nil {
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
@@ -2141,6 +2144,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 				}
 			}
 			opts = UnsealETagFn(objectEncryptionKey, crypto.SSEC.IsEncrypted(li.UserDefined))
+			opts.SetETagEncryptionOpts(nil)
 		}
 	}
 

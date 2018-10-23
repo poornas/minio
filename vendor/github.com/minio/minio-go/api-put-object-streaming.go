@@ -396,9 +396,11 @@ func (c Client) putObjectDo(ctx context.Context, bucketName, objectName string, 
 	// Execute PUT an objectName.
 	resp, err := c.executeMethod(ctx, "PUT", reqMetadata)
 	defer closeResponse(resp)
+	//fmt.Println(reqMetadata, "<=====", resp, err)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+
 	if resp != nil {
 		if resp.StatusCode != http.StatusOK {
 			return ObjectInfo{}, httpRespToErrorResponse(resp, bucketName, objectName)
