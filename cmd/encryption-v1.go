@@ -924,13 +924,6 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 		key [32]byte
 		err error
 	)
-
-	// for gateway double encryption use encrypted MD5Sum saved as metadata
-	_, ok := objInfo.UserDefined[minioInternalMD5Sum]
-
-	if ok {
-		objInfo.ETag = objInfo.UserDefined[minioInternalMD5Sum]
-	}
 	// If ETag is contentMD5Sum return it as is.
 	if len(objInfo.ETag) == 32 {
 		return objInfo.ETag

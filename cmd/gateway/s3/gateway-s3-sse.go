@@ -599,7 +599,6 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 		return l.s3Objects.PutObjectPart(ctx, bucket, object, uploadID, partID, data, s3Opts)
 	}
 	partUploadName := path.Join(uploadPath, strconv.Itoa(partID))
-
 	oi, err := l.s3Objects.PutObject(ctx, bucket, partUploadName, data, map[string]string{}, s3Opts)
 	if err != nil {
 		return pi, err
@@ -817,15 +816,20 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	gwMeta.Parts = make([]minio.ObjectPartInfo, len(uploadedParts))
 
 	var objectSize int64
-	var marker, delimiter string
-	//var delimiter string
+	// var marker, delimiter string
+	var delimiter string
 
 	var partsMap = make(map[string]string)
 	// Validate each part and then commit to disk.
 	for i, part := range uploadedParts {
 		obj := fmt.Sprintf("%s/%d", uploadPrefix, part.PartNumber)
 		partsMap[obj] = ""
-		partMeta, err := l.getDareMetadata()
+		partMeta, err := l.getPartMetadata(ctx, bucket, object, uploadID, part.PartNumber, part.ETag)
+		if err != nil || len(partMeta.Parts) == 0 {
+			return oi, minio.InvalidPart{}
+		}
+		partInfo := partMeta.Parts[0]
+		var partETag string
 		// res, rerr := l.ListObjects(ctx, bucket, obj, marker, delimiter, 1)
 		// if rerr != nil || len(res.Objects) == 0 {
 		// 	return oi, minio.InvalidPart{}
@@ -841,14 +845,14 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		// if opts.GetEncryptedETagMetaFn != nil {
 		// 	encETag := opts.GetEncryptedETagMetaFn(partInfo)
 		if opts.GetDecryptedETagFn != nil && opts.GetEncryptedETagMetaFn != nil {
-			partInfo.ETag = opts.GetDecryptedETagFn(opts.GetEncryptedETagMetaFn(partInfo))
+			partETag = opts.GetDecryptedETagFn(partInfo.ETag)
 		}
 		//fmt.Println("now got ACTUAL Internal minio etag of part::", obj, "as ", partInfo.ETag)
 
 		//fmt.Println("====> part returned by ListObjects....", partInfo.ETag)
 		// All parts should have same ETag as previously generated.
 		// we are comparing encrypted etags here
-		if partInfo.ETag != part.ETag {
+		if partETag != part.ETag {
 			invp := minio.InvalidPart{
 				PartNumber: part.PartNumber,
 				ExpETag:    partInfo.ETag,
@@ -870,7 +874,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		// Add incoming parts.
 		gwMeta.Parts[i] = minio.ObjectPartInfo{
 			Number: part.PartNumber,
-			ETag:   part.ETag,
+			ETag:   partETag, //save encrypted ETag
 			Size:   partInfo.Size,
 			Name:   partInfo.Name,
 		}
@@ -900,6 +904,10 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 			startAfter = obj.Name
 			// delete parts not found in uploadedParts  map
 			if _, ok := partsMap[obj.Name]; !ok {
+				l.s3Objects.DeleteObject(ctx, bucket, obj.Name)
+			}
+			// delete temporary part metadata files
+			if strings.HasSuffix(obj.Name, gwpartMetaJSON) {
 				l.s3Objects.DeleteObject(ctx, bucket, obj.Name)
 			}
 		}
