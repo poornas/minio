@@ -33,7 +33,6 @@ import (
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/sio"
 
-	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/hash"
 )
@@ -41,6 +40,9 @@ import (
 const (
 	// name of custom multipart metadata file for s3 backend.
 	gwdareMetaJSON string = "dare.meta"
+
+	// name of temporary per part metadata file
+	gwpartMetaJSON string = "part.meta"
 	// custom multipart files are stored under the defaultMinioGWPrefix
 	defaultMinioGWPrefix     = ".minio"
 	defaultGWContentFileName = "data"
@@ -278,6 +280,21 @@ func (l *s3EncObjects) getDareMetadata(ctx context.Context, bucket, objectPrefix
 	return readGWMetadata(ctx, buffer)
 }
 
+// getPartmetadata fetches part.meta from s3 backend for the part and marshals into a structured format.
+func (l *s3EncObjects) getPartMetadata(ctx context.Context, bucket, object, uploadID string, partID int, partETag string) (m gwMetaV1, err error) {
+	partMetaFile := path.Join(object, defaultMinioGWPrefix, uploadID, strconv.Itoa(partID), partETag, gwpartMetaJSON)
+	oi, err1 := l.s3Objects.GetObjectInfo(ctx, bucket, partMetaFile, minio.ObjectOptions{})
+	if err1 != nil {
+		return m, err1
+	}
+	var buffer bytes.Buffer
+	err = l.s3Objects.GetObject(ctx, bucket, partMetaFile, 0, oi.Size, &buffer, oi.ETag, minio.ObjectOptions{})
+	if err != nil {
+		return m, err
+	}
+	return readGWMetadata(ctx, buffer)
+}
+
 // writes dare metadata to the s3 backend
 func (l *s3EncObjects) writeDareMetadata(ctx context.Context, bucket, objectPrefix string, m gwMetaV1, o minio.ObjectOptions) error {
 	dareMetaFile := path.Join(objectPrefix, gwdareMetaJSON)
@@ -349,47 +366,47 @@ func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObje
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.CopyObject(ctx, srcBucket, srcObject, dstBucket, dstObject, srcInfo, srcOpts, dstOpts)
 	}
-	// Check if source is custom multipart Object. If not, Get source object, decrypt at gateway and
-	// upload with destination side encryption options
-	gwMeta, err := l.getDareMetadata(ctx, srcBucket, getGWMetaPath(srcObject))
-	if err != nil {
-		return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
-	}
+	/*
+		var (
+			gwMeta gwMetaV1
+		)
 
-	// src encrypted, but not target or custom encrypted without multipart
-	if dstOpts.ServerSideEncryption == nil || len(gwMeta.Parts) == 0 {
-		//fmt.Println("should be here....", dstObject)
-		return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
-	}
+			// Check if source is custom multipart Object. If not, Get source object, decrypt at gateway and
+			// upload with destination side encryption options
+			gwMeta, err = l.getDareMetadata(ctx, srcBucket, getGWMetaPath(srcObject))
+			if err != nil {
+				return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
+			}
 
-	// convert copy src encryption options for GET calls
-	var getOpts minio.ObjectOptions
-	if srcOpts.ServerSideEncryption != nil {
-		getOpts.ServerSideEncryption = encrypt.SSE(srcOpts.ServerSideEncryption)
-	}
+			// src encrypted, but not target or custom encrypted without multipart
+			if dstOpts.ServerSideEncryption == nil || len(gwMeta.Parts) == 0 {
+				//fmt.Println("should be here....", dstObject)
+				return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
+			}
 
-	// overwrite any previous unencrypted object with same name
-	defer l.s3Objects.DeleteObject(ctx, dstBucket, dstObject)
+			// // overwrite any previous unencrypted object with same name
+			// defer l.s3Objects.DeleteObject(ctx, dstBucket, dstObject)
 
-	dstUploadID, err := l.NewMultipartUpload(ctx, dstBucket, dstObject, srcInfo.UserDefined, dstOpts)
-	if err != nil {
-		logger.LogIf(ctx, err)
-		return
-	}
-	var uploadedParts = make([]minio.CompletePart, 0)
-	var partID = 1
+			// dstUploadID, err = l.NewMultipartUpload(ctx, dstBucket, dstObject, srcInfo.UserDefined, dstOpts)
+			// if err != nil {
+			// 	logger.LogIf(ctx, err)
+			// 	return
+			// }
+			// var uploadedParts = make([]minio.CompletePart, 0)
+			// var partID = 1
 
-	partUploadName := path.Join(getTmpGWMetaPath(dstObject, dstUploadID), strconv.Itoa(partID))
-	bkendObjInfo, rerr := l.s3Objects.PutObject(ctx, dstBucket, partUploadName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
-	if rerr != nil {
-		return
-	}
-	uploadedParts = append(uploadedParts, minio.CompletePart{
-		ETag:       bkendObjInfo.ETag,
-		PartNumber: partID,
-	})
-
-	return l.CompleteMultipartUpload(ctx, dstBucket, dstObject, dstUploadID, uploadedParts, dstOpts)
+			// partUploadName := path.Join(getTmpGWMetaPath(dstObject, dstUploadID), strconv.Itoa(partID))
+			// bkendObjInfo, rerr := l.s3Objects.PutObject(ctx, dstBucket, partUploadName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
+			// if rerr != nil {
+			// 	return objInfo, rerr
+			// }
+			// uploadedParts = append(uploadedParts, minio.CompletePart{
+			// 	ETag:       bkendObjInfo.ETag,
+			// 	PartNumber: partID,
+			// })
+	*/
+	// return l.CompleteMultipartUpload(ctx, dstBucket, dstObject, dstUploadID, uploadedParts, dstOpts)
+	return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
 }
 
 // DeleteObject deletes a blob in bucket
@@ -533,7 +550,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	// overwrite any previous unencrypted object with same name
 	defer l.s3Objects.DeleteObject(ctx, bucket, object)
 
-	oi, err := l.s3Objects.PutObject(ctx, bucket, getGWContentPath(object), data, metadata, opts)
+	oi, err := l.s3Objects.PutObject(ctx, bucket, getGWContentPath(object), data, map[string]string{}, opts)
 	if err != nil {
 		return objInfo, err
 	}
@@ -583,21 +600,40 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 	}
 	partUploadName := path.Join(uploadPath, strconv.Itoa(partID))
 
-	// Save encrypted ETag of original contentMD5 sum
-	var meta map[string]string
-	if opts.SetEncryptedETagMetaFn != nil {
-		meta = opts.SetEncryptedETagMetaFn(meta)
-	}
-	oi, err := l.s3Objects.PutObject(ctx, bucket, partUploadName, data, meta, s3Opts)
+	oi, err := l.s3Objects.PutObject(ctx, bucket, partUploadName, data, map[string]string{}, s3Opts)
 	if err != nil {
 		return pi, err
 	}
+	gwMeta := newGWMetaV1()
+	gwMeta.Parts = make([]minio.ObjectPartInfo, 1)
+	if opts.CreateEncryptedETagFn != nil {
+		encMD5, _, err := opts.CreateEncryptedETagFn()
+		if err != nil {
+			return pi, err
+		}
 
-	oi.Name = object
-	if opts.GetEncryptedETagMetaFn != nil {
-		oi.ETag = opts.GetEncryptedETagMetaFn(oi)
+		// Add incoming part.
+		gwMeta.Parts[0] = minio.ObjectPartInfo{
+			Number: partID,
+			ETag:   encMD5,
+			Size:   oi.Size,
+			Name:   strconv.Itoa(partID),
+		}
+		gwMeta.ETag = encMD5
+		gwMeta.Stat.Size = oi.Size
+		gwMeta.Stat.ModTime = oi.ModTime
 	}
-	return FromGatewayObjectPart(partID, oi), nil
+	fmt.Println(gwMeta.ETag, "<====encrypted ETag  ===> part ETag ", oi.ETag)
+	if err = l.writeDareMetadata(ctx, bucket, path.Join(partUploadName, oi.ETag, gwpartMetaJSON), gwMeta, minio.ObjectOptions{}); err != nil {
+		return pi, err
+	}
+
+	return minio.PartInfo{
+		Size:         gwMeta.Stat.Size,
+		ETag:         minio.CanonicalizeETag(gwMeta.ETag),
+		LastModified: gwMeta.Stat.ModTime,
+		PartNumber:   partID,
+	}, nil
 }
 
 // CopyObjectPart creates a part in a multipart upload by copying
@@ -608,40 +644,40 @@ func (l *s3EncObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject,
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.CopyObjectPart(ctx, srcBucket, srcObject, destBucket, destObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
 	}
-	srcInfo.UserDefined = map[string]string{
-		"x-amz-copy-source-if-match": srcInfo.ETag,
-	}
-	// convert copy src and dst encryption options for GET/PUT calls
-	var getOpts minio.ObjectOptions
-	if srcOpts.ServerSideEncryption != nil {
-		getOpts.ServerSideEncryption = encrypt.SSE(srcOpts.ServerSideEncryption)
-	}
+	// srcInfo.UserDefined = map[string]string{
+	// 	"x-amz-copy-source-if-match": srcInfo.ETag,
+	// }
 
 	// Get dare meta json
-	gwMeta, err := l.getDareMetadata(ctx, destBucket, getTmpGWMetaPath(destObject, uploadID))
+	_, err = l.getDareMetadata(ctx, destBucket, getTmpGWMetaPath(destObject, uploadID))
 	if err != nil {
-		// both src and dest are not encrypted - delegate to backend
-		if !crypto.IsEncrypted(srcInfo.UserDefined) {
+		return p, minio.InvalidUploadID{UploadID: uploadID}
+	}
+	return l.PutObjectPart(ctx, destBucket, destObject, uploadID, partID, srcInfo.PutObjectReader, dstOpts)
+	/*
+		if err != nil {
+			// both src and dest are not encrypted - delegate to backend
+			if !crypto.IsEncrypted(srcInfo.UserDefined) {
+				return l.s3Objects.CopyObjectPart(ctx, srcBucket, srcObject, destBucket, destObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
+			}
+			// src is encrypted
+			partName := path.Join(getTmpGWMetaPath(destObject, uploadID), strconv.Itoa(partID))
+			oi, oerr := l.PutObject(ctx, destBucket, partName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
+			if oerr != nil {
+				return minio.PartInfo{}, oerr
+			}
+			return minio.PartInfo{PartNumber: partID, ETag: oi.ETag, Size: oi.Size}, nil
+		}
+		if !crypto.IsEncrypted(gwMeta.ToObjectInfo(destBucket, destObject).UserDefined) {
 			return l.s3Objects.CopyObjectPart(ctx, srcBucket, srcObject, destBucket, destObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
 		}
-		// src is encrypted
-		partName := path.Join(getTmpGWMetaPath(destObject, uploadID), strconv.Itoa(partID))
-		oi, oerr := l.PutObject(ctx, destBucket, partName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
-		if oerr != nil {
-			return minio.PartInfo{}, oerr
+		uploadPath := getTmpGWMetaPath(destObject, uploadID)
+		partUploadName := path.Join(uploadPath, strconv.Itoa(partID))
+		bkendObjInfo, rerr := l.s3Objects.PutObject(ctx, destBucket, partUploadName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
+		if rerr != nil {
+			return
 		}
-		return minio.PartInfo{PartNumber: partID, ETag: oi.ETag, Size: oi.Size}, nil
-	}
-	if !crypto.IsEncrypted(gwMeta.ToObjectInfo(destBucket, destObject).UserDefined) {
-		return l.s3Objects.CopyObjectPart(ctx, srcBucket, srcObject, destBucket, destObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
-	}
-	uploadPath := getTmpGWMetaPath(destObject, uploadID)
-	partUploadName := path.Join(uploadPath, strconv.Itoa(partID))
-	bkendObjInfo, rerr := l.s3Objects.PutObject(ctx, destBucket, partUploadName, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
-	if rerr != nil {
-		return
-	}
-	return minio.PartInfo{PartNumber: partID, ETag: bkendObjInfo.ETag, Size: bkendObjInfo.Size}, nil
+		return minio.PartInfo{PartNumber: partID, ETag: bkendObjInfo.ETag, Size: bkendObjInfo.Size}, nil */
 }
 
 // ListObjectParts returns all object parts for specified object in specified bucket
@@ -789,12 +825,13 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	for i, part := range uploadedParts {
 		obj := fmt.Sprintf("%s/%d", uploadPrefix, part.PartNumber)
 		partsMap[obj] = ""
-		res, rerr := l.ListObjects(ctx, bucket, obj, marker, delimiter, 1)
-		if rerr != nil || len(res.Objects) == 0 {
-			return oi, minio.InvalidPart{}
-		}
-		//fmt.Println("******************************** res.Objects[0] === >", res.Objects[0].ETag, res.Objects[0].UserDefined)
-		partInfo := res.Objects[0]
+		partMeta, err := l.getDareMetadata()
+		// res, rerr := l.ListObjects(ctx, bucket, obj, marker, delimiter, 1)
+		// if rerr != nil || len(res.Objects) == 0 {
+		// 	return oi, minio.InvalidPart{}
+		// }
+		// //fmt.Println("******************************** res.Objects[0] === >", res.Objects[0].ETag, res.Objects[0].UserDefined)
+		// partInfo := res.Objects[0]
 		// partInfo, err := l.s3Objects.GetObjectInfo(ctx, bucket, obj, opts)
 		// if err != nil {
 		// 	//fmt.Println("\n#12", obj, opts, err)
