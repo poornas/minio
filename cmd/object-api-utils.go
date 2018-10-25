@@ -241,12 +241,6 @@ func extractETag(metadata map[string]string) string {
 	if !ok {
 		etag = metadata["etag"]
 	}
-	if GlobalGatewaySSE != nil {
-		if encEtag, ok := metadata["X-Amz-Meta-"+minioInternalMD5Sum]; ok {
-			etag = encEtag
-		}
-	}
-
 	// Success.
 	return etag
 }

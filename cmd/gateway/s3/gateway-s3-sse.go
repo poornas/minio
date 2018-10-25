@@ -110,7 +110,7 @@ func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, contin
 			// get objectname and ObjectInfo from the custom metadata file
 			if strings.HasSuffix(obj.Name, gwdareMetaJSON) {
 				objSlice := strings.Split(obj.Name, slashSeparator+defaultMinioGWPrefix)
-				gwMeta, e := l.getDareMetadata(ctx, bucket, getGWMetaPath(objSlice[0]))
+				gwMeta, e := l.getGWMetadata(ctx, bucket, getDareMetaPath(objSlice[0]))
 				if e != nil {
 					continue
 				}
@@ -130,7 +130,7 @@ func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, contin
 			prefixSlice := strings.Split(p, defaultMinioGWPrefix+slashSeparator)
 			if len(prefixSlice) >= 1 {
 				objName := strings.TrimSuffix(prefixSlice[0], slashSeparator)
-				gm, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(objName))
+				gm, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(objName))
 				// if prefix is actually a custom multi-part object, append it to objects
 				if err == nil {
 					objects = append(objects, gm.ToObjectInfo(bucket, objName))
@@ -174,7 +174,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.GetObject(ctx, bucket, key, startOffset, length, writer, etag, o)
 	}
-	dmeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(key))
+	dmeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(key))
 	if err != nil {
 		//fmt.Println(".................................................GO---------------", err, "no dmeta for ", key)
 		// unencrypted content
@@ -265,30 +265,20 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	return nil
 }
 
-// getDaremetadata fetches dare.meta from s3 backend and marshals into a structured format.
-func (l *s3EncObjects) getDareMetadata(ctx context.Context, bucket, objectPrefix string) (m gwMetaV1, err error) {
-	dareMetaFile := path.Join(objectPrefix, gwdareMetaJSON)
-	oi, err1 := l.s3Objects.GetObjectInfo(ctx, bucket, dareMetaFile, minio.ObjectOptions{})
-	if err1 != nil {
-		return m, err1
-	}
-	var buffer bytes.Buffer
-	err = l.s3Objects.GetObject(ctx, bucket, dareMetaFile, 0, oi.Size, &buffer, oi.ETag, minio.ObjectOptions{})
-	if err != nil {
-		return m, err
-	}
-	return readGWMetadata(ctx, buffer)
+func (l *s3EncObjects) isGWEncrypted(ctx context.Context, bucket, object string) bool {
+	dareMetaFile := path.Join(getGWMetaPath(object), gwdareMetaJSON)
+	_, err := l.s3Objects.GetObjectInfo(ctx, bucket, dareMetaFile, minio.ObjectOptions{})
+	return err == nil
 }
 
-// getPartmetadata fetches part.meta from s3 backend for the part and marshals into a structured format.
-func (l *s3EncObjects) getPartMetadata(ctx context.Context, bucket, object, uploadID string, partID int, partETag string) (m gwMetaV1, err error) {
-	partMetaFile := path.Join(object, defaultMinioGWPrefix, uploadID, strconv.Itoa(partID), partETag, gwpartMetaJSON)
-	oi, err1 := l.s3Objects.GetObjectInfo(ctx, bucket, partMetaFile, minio.ObjectOptions{})
+// getDaremetadata fetches dare.meta from s3 backend and marshals into a structured format.
+func (l *s3EncObjects) getGWMetadata(ctx context.Context, bucket, metaFileName string) (m gwMetaV1, err error) {
+	oi, err1 := l.s3Objects.GetObjectInfo(ctx, bucket, metaFileName, minio.ObjectOptions{})
 	if err1 != nil {
 		return m, err1
 	}
 	var buffer bytes.Buffer
-	err = l.s3Objects.GetObject(ctx, bucket, partMetaFile, 0, oi.Size, &buffer, oi.ETag, minio.ObjectOptions{})
+	err = l.s3Objects.GetObject(ctx, bucket, metaFileName, 0, oi.Size, &buffer, oi.ETag, minio.ObjectOptions{})
 	if err != nil {
 		return m, err
 	}
@@ -296,21 +286,28 @@ func (l *s3EncObjects) getPartMetadata(ctx context.Context, bucket, object, uplo
 }
 
 // writes dare metadata to the s3 backend
-func (l *s3EncObjects) writeDareMetadata(ctx context.Context, bucket, objectPrefix string, m gwMetaV1, o minio.ObjectOptions) error {
-	dareMetaFile := path.Join(objectPrefix, gwdareMetaJSON)
-	hashReader, err := getGWMetadata(ctx, bucket, dareMetaFile, m)
+func (l *s3EncObjects) writeGWMetadata(ctx context.Context, bucket, metaFileName string, m gwMetaV1, o minio.ObjectOptions) error {
+	hashReader, err := getGWMetadata(ctx, bucket, metaFileName, m)
 	if err != nil {
 		logger.LogIf(ctx, err)
 		return err
 	}
-	_, err = l.s3Objects.PutObject(ctx, bucket, dareMetaFile, minio.NewPutObjectReader(hashReader), map[string]string{}, o)
+	_, err = l.s3Objects.PutObject(ctx, bucket, metaFileName, minio.NewPutObjectReader(hashReader), map[string]string{}, o)
 	return err
+}
+func getTmpDareMetaPath(object, uploadID string) string {
+	return path.Join(getGWMetaPath(object), uploadID, gwdareMetaJSON)
+}
+func getDareMetaPath(object string) string {
+	return path.Join(getGWMetaPath(object), gwdareMetaJSON)
+}
+func getPartMetaPath(object, uploadID string, partID int, partETag string) string {
+	return path.Join(object, defaultMinioGWPrefix, uploadID, strconv.Itoa(partID), partETag, gwpartMetaJSON)
 }
 
 // deletes the custom dare metadata file saved at the backend
-func (l *s3EncObjects) deleteDareMetadata(ctx context.Context, bucket, objectPrefix string) error {
-	dareMetaFile := path.Join(objectPrefix, gwdareMetaJSON)
-	return l.s3Objects.DeleteObject(ctx, bucket, dareMetaFile)
+func (l *s3EncObjects) deleteGWMetadata(ctx context.Context, bucket, metaFileName string) error {
+	return l.s3Objects.DeleteObject(ctx, bucket, metaFileName)
 }
 
 // GetObjectNInfo - returns object info and locked object ReadCloser
@@ -319,7 +316,7 @@ func (l *s3EncObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 		return l.s3Objects.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
 	}
 	var objInfo minio.ObjectInfo
-	gwMeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object))
+	gwMeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object))
 	if err != nil {
 		return l.s3Objects.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
 	}
@@ -347,8 +344,10 @@ func (l *s3EncObjects) GetObjectInfo(ctx context.Context, bucket string, object 
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.GetObjectInfo(ctx, bucket, object, opts)
 	}
-	gwMeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object))
+	gwMeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object))
+	fmt.Println("err..................", err, gwMeta)
 	if err != nil {
+		fmt.Println("....................................err", err, getDareMetaPath(object))
 		return l.s3Objects.GetObjectInfo(ctx, bucket, object, opts)
 	}
 	return gwMeta.ToObjectInfo(bucket, object), nil
@@ -417,7 +416,7 @@ func (l *s3EncObjects) DeleteObject(ctx context.Context, bucket string, object s
 		return l.s3Objects.DeleteObject(ctx, bucket, object)
 	}
 	// Get dare meta json
-	if _, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object)); err != nil {
+	if _, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object)); err != nil {
 		return l.s3Objects.DeleteObject(ctx, bucket, object)
 	}
 	return l.deleteEncryptedObject(ctx, bucket, object)
@@ -425,19 +424,22 @@ func (l *s3EncObjects) DeleteObject(ctx context.Context, bucket string, object s
 
 func (l *s3EncObjects) deleteEncryptedObject(ctx context.Context, bucket string, object string) error {
 	// Get dare meta json
-	gwMeta, err := l.getDareMetadata(ctx, bucket, getGWMetaPath(object))
+	gwMeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object))
 	if err != nil {
-		return l.s3Objects.DeleteObject(ctx, bucket, object)
+		return err
 	}
 	if len(gwMeta.Parts) == 0 {
+		fmt.Println("deleting...", getGWContentPath(object))
 		l.s3Objects.DeleteObject(ctx, bucket, getGWContentPath(object))
 	}
 	for _, part := range gwMeta.Parts {
+		fmt.Println("deleting...part", part)
 		if err = l.s3Objects.DeleteObject(ctx, bucket, part.Name); err != nil {
 			return err
 		}
 	}
-	return l.deleteDareMetadata(ctx, bucket, getGWMetaPath(object))
+	fmt.Println("deleting meta...")
+	return l.deleteGWMetadata(ctx, bucket, getDareMetaPath(object))
 }
 
 // ListMultipartUploads lists all multipart uploads.
@@ -513,11 +515,10 @@ func (l *s3EncObjects) NewMultipartUpload(ctx context.Context, bucket string, ob
 	// Create uploadID and write a temporary dare.meta object under object/uploadID prefix
 	if (len(minio.GlobalGatewaySSE) > 0) && o.ServerSideEncryption != nil {
 		uploadID := minio.MustGetUUID()
-		tmpUploadPrefix := getTmpGWMetaPath(object, uploadID)
 		gwmeta := newGWMetaV1()
 		gwmeta.Meta = metadata
 		gwmeta.Stat.ModTime = time.Now().UTC()
-		err := l.writeDareMetadata(ctx, bucket, tmpUploadPrefix, gwmeta, minio.ObjectOptions{})
+		err := l.writeGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID), gwmeta, minio.ObjectOptions{})
 		if err != nil {
 			return uploadID, err
 		}
@@ -532,11 +533,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 		return l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
 	}
 	if opts.ServerSideEncryption == nil {
-		wasEncrypted := false
-		if _, err := l.getDareMetadata(ctx, bucket, object); err == nil {
-			wasEncrypted = true
-		}
-		fmt.Println("about to do backend put of ", object, " with opts nil")
+		wasEncrypted := l.isGWEncrypted(ctx, bucket, object)
 		oi, err := l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
 		if err != nil {
 			return objInfo, err
@@ -544,7 +541,6 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 		if wasEncrypted {
 			l.deleteEncryptedObject(ctx, bucket, object)
 		}
-		fmt.Println("ETAG generated by PUT::", oi.ETag)
 		return oi, nil
 	}
 	// overwrite any previous unencrypted object with same name
@@ -554,8 +550,6 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	if err != nil {
 		return objInfo, err
 	}
-
-	oi.Name = object
 
 	gwMeta := newGWMetaV1()
 	gwMeta.Meta = make(map[string]string)
@@ -573,12 +567,12 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	gwMeta.ETag = encMD5
 	gwMeta.Stat.Size = oi.Size
 	gwMeta.Stat.ModTime = oi.ModTime
-	fmt.Println(gwMeta.ETag)
-	if err = l.writeDareMetadata(ctx, bucket, getGWMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
+	if err = l.writeGWMetadata(ctx, bucket, getDareMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
 		return objInfo, err
 	}
-	oi.ETag = contentMD5
-	return oi, nil
+	objInfo = gwMeta.ToObjectInfo(bucket, object)
+
+	return objInfo, nil
 }
 
 // PutObjectPart puts a part of object in bucket
@@ -622,8 +616,7 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 		gwMeta.Stat.Size = oi.Size
 		gwMeta.Stat.ModTime = oi.ModTime
 	}
-	fmt.Println(gwMeta.ETag, "<====encrypted ETag  ===> part ETag ", oi.ETag)
-	if err = l.writeDareMetadata(ctx, bucket, path.Join(partUploadName, oi.ETag, gwpartMetaJSON), gwMeta, minio.ObjectOptions{}); err != nil {
+	if err = l.writeGWMetadata(ctx, bucket, getPartMetaPath(object, uploadID, partID, oi.ETag), gwMeta, minio.ObjectOptions{}); err != nil {
 		return pi, err
 	}
 
@@ -648,7 +641,7 @@ func (l *s3EncObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject,
 	// }
 
 	// Get dare meta json
-	_, err = l.getDareMetadata(ctx, destBucket, getTmpGWMetaPath(destObject, uploadID))
+	_, err = l.getGWMetadata(ctx, destBucket, getTmpGWMetaPath(destObject, uploadID))
 	if err != nil {
 		return p, minio.InvalidUploadID{UploadID: uploadID}
 	}
@@ -687,7 +680,7 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	// We do not store parts uploaded so far in the dare.meta. Only CompleteMultipartUpload finalizes the parts under upload prefix.Otherwise,
 	// there could be situations of dare.meta getting corrupted by competing upload parts.
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
-	dm, err := l.getDareMetadata(ctx, bucket, uploadPrefix)
+	dm, err := l.getGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID))
 	if err != nil {
 		return l.s3Objects.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)
 	}
@@ -793,7 +786,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		return l.s3Objects.CompleteMultipartUpload(ctx, bucket, object, uploadID, uploadedParts, opts)
 	}
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
-	dareMeta, err := l.getDareMetadata(ctx, bucket, uploadPrefix)
+	dareMeta, err := l.getGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID))
 	if err != nil {
 		return l.s3Objects.CompleteMultipartUpload(ctx, bucket, object, uploadID, uploadedParts, opts)
 	}
@@ -824,7 +817,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	for i, part := range uploadedParts {
 		obj := fmt.Sprintf("%s/%d", uploadPrefix, part.PartNumber)
 		partsMap[obj] = ""
-		partMeta, err := l.getPartMetadata(ctx, bucket, object, uploadID, part.PartNumber, part.ETag)
+		partMeta, err := l.getGWMetadata(ctx, bucket, getPartMetaPath(object, uploadID, part.PartNumber, part.ETag))
 		if err != nil || len(partMeta.Parts) == 0 {
 			return oi, minio.InvalidPart{}
 		}
@@ -916,11 +909,11 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 			break
 		}
 	}
-	if err = l.writeDareMetadata(ctx, bucket, getGWMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
+	if err = l.writeGWMetadata(ctx, bucket, getGWMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
 		return oi, err
 	}
 	// clean up temporary upload dare.meta file under uploadID prefix
-	if err = l.deleteDareMetadata(ctx, bucket, getTmpGWMetaPath(object, uploadID)); err != nil {
+	if err = l.deleteGWMetadata(ctx, bucket, getTmpGWMetaPath(object, uploadID)); err != nil {
 		return oi, err
 	}
 	return gwMeta.ToObjectInfo(bucket, object), nil
@@ -991,7 +984,7 @@ func (l *s3EncObjects) getStalePartsForBucket(ctx context.Context, bucket string
 			}
 			if strings.HasSuffix(obj.Name, path.Join(defaultMinioGWPrefix, gwdareMetaJSON)) {
 				objSlice := strings.Split(obj.Name, path.Join(slashSeparator, defaultMinioGWPrefix))
-				meta, err := l.getDareMetadata(ctx, bucket, objSlice[0])
+				meta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(objSlice[0]))
 				if err != nil {
 					continue
 				}

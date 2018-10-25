@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -86,6 +87,7 @@ func (m gwMetaV1) ToObjectInfo(bucket, object string) minio.ObjectInfo {
 		"Last-Modified",
 		"Content-Type",
 	}, defaultFilterKeys...)
+	fmt.Println(m, "????=======================>", m.ETag)
 	objInfo := minio.ObjectInfo{
 		IsDir:           false,
 		Bucket:          bucket,
@@ -94,7 +96,7 @@ func (m gwMetaV1) ToObjectInfo(bucket, object string) minio.ObjectInfo {
 		ModTime:         m.Stat.ModTime,
 		ContentType:     m.Meta["content-type"],
 		ContentEncoding: m.Meta["content-encoding"],
-		ETag:            minio.ExtractETag(m.Meta),
+		ETag:            m.ETag,
 		UserDefined:     minio.CleanMetadataKeys(m.Meta, filterKeys...),
 		Parts:           m.Parts,
 	}
@@ -124,6 +126,11 @@ func parseGWStat(gwMetaBuf []byte) (si minio.StatInfo, e error) {
 // parses gateway metadata version from metadata json
 func parseGWVersion(gwMetaBuf []byte) string {
 	return gjson.GetBytes(gwMetaBuf, "version").String()
+}
+
+// parses gateway ETag from metadata json
+func parseGWETag(gwMetaBuf []byte) string {
+	return gjson.GetBytes(gwMetaBuf, "etag").String()
 }
 
 // parses gateway metadata format from metadata json
@@ -170,7 +177,7 @@ func gwMetaUnmarshalJSON(ctx context.Context, gwMetaBuf []byte) (gwMeta gwMetaV1
 		logger.LogIf(ctx, err)
 		return gwMeta, err
 	}
-
+	gwMeta.ETag = parseGWETag(gwMetaBuf)
 	gwMeta.Stat = stat
 
 	// Parse the GW Parts.

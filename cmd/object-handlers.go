@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	goioutil "io/ioutil"
 	"net"
@@ -1061,6 +1062,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutObject")
 
+	fmt.Println("POH...")
 	defer logger.AuditLog(ctx, r)
 
 	objectAPI := api.ObjectAPI()
@@ -1279,14 +1281,17 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-
+	fmt.Println("..............after put....................")
 	if objInfo.IsCompressed() {
 		// Ignore compressed ETag.
 		objInfo.ETag = objInfo.ETag + "-1"
 	}
 	if hasServerSideEncryptionHeader(r.Header) {
+		fmt.Println("about to decrypt.......................", objInfo.UserDefined, crypto.SSEC.IsEncrypted(objInfo.UserDefined))
 		w.Header().Set("ETag", "\""+getDecryptedETag(r.Header, objInfo, false)+"\"")
 	} else {
+		fmt.Println("no sse header.........................")
+
 		w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
 	}
 	if objectAPI.IsEncryptionSupported() {
