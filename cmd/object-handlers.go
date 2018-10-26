@@ -943,6 +943,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 			}
 			pReader.DataReader = srcInfo.Reader
 			srcInfo.PutObjectReader = pReader
+			dstOpts.SetETagEncryptionOpts(srcInfo.PutObjectReader)
 		}
 	}
 	srcInfo.UserDefined, err = getCpObjMetadataFromHeader(ctx, r, srcInfo.UserDefined)

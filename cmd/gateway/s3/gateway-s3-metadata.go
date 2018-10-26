@@ -96,7 +96,7 @@ func (m gwMetaV1) ToObjectInfo(bucket, object string) minio.ObjectInfo {
 		ModTime:         m.Stat.ModTime,
 		ContentType:     m.Meta["content-type"],
 		ContentEncoding: m.Meta["content-encoding"],
-		ETag:            m.ETag,
+		ETag:            minio.ExtractETag(m.Meta),
 		UserDefined:     minio.CleanMetadataKeys(m.Meta, filterKeys...),
 		Parts:           m.Parts,
 	}

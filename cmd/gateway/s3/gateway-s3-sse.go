@@ -405,6 +405,12 @@ func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObje
 			// })
 	*/
 	// return l.CompleteMultipartUpload(ctx, dstBucket, dstObject, dstUploadID, uploadedParts, dstOpts)
+	fmt.Println("srcInfo.PutObjectReader:::", srcInfo.PutObjectReader, dstOpts, srcOpts, srcInfo.UserDefined["etag"])
+	if dstOpts.GetDecryptedETagFn != nil {
+		if etag, ok := srcInfo.UserDefined["etag"]; ok {
+			srcInfo.UserDefined["etag"] = dstOpts.GetDecryptedETagFn(etag)
+		}
+	}
 	return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, dstOpts)
 }
 
@@ -559,12 +565,16 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	for k, v := range metadata {
 		gwMeta.Meta[k] = v
 	}
-	encMD5, contentMD5, err := opts.CreateEncryptedETagFn()
-	if err != nil {
-		log.Fatal("shouldnt occur")
+	var encMD5, contentMD5 string
+	if opts.CreateEncryptedETagFn != nil {
+		encMD5, contentMD5, err = opts.CreateEncryptedETagFn()
+		if err != nil {
+			log.Fatal("shouldnt occur")
+		}
 	}
+
 	fmt.Println(encMD5, "<== ENC md5 saved in metadata", contentMD5, " actual MD5Sum from origreader")
-	gwMeta.ETag = encMD5
+	gwMeta.Meta["etag"] = encMD5
 	gwMeta.Stat.Size = oi.Size
 	gwMeta.Stat.ModTime = oi.ModTime
 	if err = l.writeGWMetadata(ctx, bucket, getDareMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
@@ -809,19 +819,29 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	gwMeta.Parts = make([]minio.ObjectPartInfo, len(uploadedParts))
 
 	var objectSize int64
-	// var marker, delimiter string
-	var delimiter string
+	var marker, delimiter string
+	//var delimiter string
 
 	var partsMap = make(map[string]string)
 	// Validate each part and then commit to disk.
 	for i, part := range uploadedParts {
 		obj := fmt.Sprintf("%s/%d", uploadPrefix, part.PartNumber)
 		partsMap[obj] = ""
-		partMeta, err := l.getGWMetadata(ctx, bucket, getPartMetaPath(object, uploadID, part.PartNumber, part.ETag))
-		if err != nil || len(partMeta.Parts) == 0 {
+
+		res, rerr := l.s3Objects.ListObjects(ctx, bucket, obj, marker, delimiter, 1)
+		if rerr != nil || len(res.Objects) == 0 {
+			fmt.Println("list failed with", rerr, obj)
 			return oi, minio.InvalidPart{}
 		}
-		partInfo := partMeta.Parts[0]
+		//fmt.Println("******************************** res.Objects[0] === >", res.Objects[0].ETag, res.Objects[0].UserDefined)
+		partInfo := res.Objects[0]
+		fmt.Println("..........partINfo from list:", partInfo)
+		partMeta, err := l.getGWMetadata(ctx, bucket, getPartMetaPath(object, uploadID, part.PartNumber, partInfo.ETag))
+		if err != nil || len(partMeta.Parts) == 0 {
+			fmt.Println("meta art fails:", err, getPartMetaPath(object, uploadID, part.PartNumber, partInfo.ETag))
+			return oi, minio.InvalidPart{}
+		}
+
 		var partETag string
 		// res, rerr := l.ListObjects(ctx, bucket, obj, marker, delimiter, 1)
 		// if rerr != nil || len(res.Objects) == 0 {
@@ -837,10 +857,10 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		// //fmt.Println("GetEncryptedETagMetaFn ::", opts.GetEncryptedETagMetaFn, "GetEncryptedETagFn::", opts.GetEncryptedETagFn)
 		// if opts.GetEncryptedETagMetaFn != nil {
 		// 	encETag := opts.GetEncryptedETagMetaFn(partInfo)
-		if opts.GetDecryptedETagFn != nil && opts.GetEncryptedETagMetaFn != nil {
-			partETag = opts.GetDecryptedETagFn(partInfo.ETag)
+		if opts.GetDecryptedETagFn != nil {
+			partETag = opts.GetDecryptedETagFn(partMeta.ETag)
 		}
-		//fmt.Println("now got ACTUAL Internal minio etag of part::", obj, "as ", partInfo.ETag)
+		fmt.Println("now got ACTUAL Internal minio etag of part::", obj, "as ", partETag, part.ETag)
 
 		//fmt.Println("====> part returned by ListObjects....", partInfo.ETag)
 		// All parts should have same ETag as previously generated.
@@ -909,7 +929,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 			break
 		}
 	}
-	if err = l.writeGWMetadata(ctx, bucket, getGWMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
+	if err = l.writeGWMetadata(ctx, bucket, getDareMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
 		return oi, err
 	}
 	// clean up temporary upload dare.meta file under uploadID prefix

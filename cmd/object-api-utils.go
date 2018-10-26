@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -700,7 +701,10 @@ func (o *ObjectOptions) SetETagEncryptionOpts(p *PutObjectReader) {
 		}
 		var f3 CreateEncryptedETagFn
 		f3 = func() (string, string, error) {
-			return p.OrigReader.EncryptedMD5Sum()
+			if p != nil {
+				return p.OrigReader.EncryptedMD5Sum()
+			}
+			return "", "", errors.New("PutObjectReader not initialized")
 		}
 		o.SetEncryptedETagMetaFn = f1
 		o.GetEncryptedETagMetaFn = f2
