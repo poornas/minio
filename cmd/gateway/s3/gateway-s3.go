@@ -222,7 +222,8 @@ func (g *S3) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) 
 	}
 
 	s := s3Objects{
-		Client: clnt,
+		Client:           clnt,
+		multipartEtagMap: make(map[string]string),
 	}
 	if len(minio.GlobalGatewaySSE) > 0 {
 		encS := s3EncObjects{s}
@@ -240,7 +241,8 @@ func (g *S3) Production() bool {
 // s3Objects implements gateway for Minio and S3 compatible object storage servers.
 type s3Objects struct {
 	minio.GatewayUnsupported
-	Client *miniogo.Core
+	Client           *miniogo.Core
+	multipartEtagMap map[string]string
 }
 
 // Shutdown saves any gateway metadata to disk
