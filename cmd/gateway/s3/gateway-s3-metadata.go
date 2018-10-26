@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -87,7 +86,7 @@ func (m gwMetaV1) ToObjectInfo(bucket, object string) minio.ObjectInfo {
 		"Last-Modified",
 		"Content-Type",
 	}, defaultFilterKeys...)
-	fmt.Println(m, "????=======================>", m.ETag)
+	//fmt.Println(m, "????=======================>", m.ETag)
 	objInfo := minio.ObjectInfo{
 		IsDir:           false,
 		Bucket:          bucket,
@@ -96,7 +95,7 @@ func (m gwMetaV1) ToObjectInfo(bucket, object string) minio.ObjectInfo {
 		ModTime:         m.Stat.ModTime,
 		ContentType:     m.Meta["content-type"],
 		ContentEncoding: m.Meta["content-encoding"],
-		ETag:            minio.ExtractETag(m.Meta),
+		ETag:            m.ETag,
 		UserDefined:     minio.CleanMetadataKeys(m.Meta, filterKeys...),
 		Parts:           m.Parts,
 	}

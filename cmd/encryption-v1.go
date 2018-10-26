@@ -25,7 +25,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -925,15 +924,15 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 		key [32]byte
 		err error
 	)
-	fmt.Println("should have come hjere...")
+	////fmt.Println("should have come hjere...")
 	// If ETag is contentMD5Sum return it as is.
 	if len(objInfo.ETag) == 32 {
-		fmt.Println("#1")
+		//fmt.Println("#1")
 		return objInfo.ETag
 	}
 
 	if crypto.IsMultiPart(objInfo.UserDefined) {
-		fmt.Println("#2")
+		//fmt.Println("#2")
 
 		return objInfo.ETag
 	}
@@ -944,11 +943,11 @@ func getDecryptedETag(headers http.Header, objInfo ObjectInfo, copySource bool) 
 		}
 	}
 	if crypto.SSEC.IsEncrypted(objInfo.UserDefined) && !copySource {
-		fmt.Println("#4")
+		//fmt.Println("#4")
 
 		return objInfo.ETag[len(objInfo.ETag)-32:]
 	}
-	fmt.Println("#41")
+	//fmt.Println("#41")
 
 	objectEncryptionKey, err := decryptObjectInfo(key[:], objInfo.Bucket, objInfo.Name, objInfo.UserDefined)
 	if err != nil {
