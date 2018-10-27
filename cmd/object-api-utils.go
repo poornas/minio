@@ -654,7 +654,7 @@ func NewPutObjectReader(r *hash.Reader) *PutObjectReader {
 
 // UnsealETagFn takes an object encryption key and returns a
 // ETag validation function and a function that returns encrypted ETag
-func UnsealETagFn(key []byte, ssec bool) (opts ObjectOptions) {
+func (o *ObjectOptions) UnsealETagFn(key []byte, ssec bool) {
 	fn1 := func(clntEtag, bkETag string) bool {
 		if ssec {
 			return clntEtag == bkETag[len(bkETag)-32:]
@@ -670,7 +670,9 @@ func UnsealETagFn(key []byte, ssec bool) (opts ObjectOptions) {
 		}
 		return tryDecryptETag(key, encEtag, ssec)
 	}
-	return ObjectOptions{ValidateETagsFn: fn1, GetEncryptedETagFn: fn2, GetDecryptedETagFn: fn3}
+	o.ValidateETagsFn = fn1
+	o.GetEncryptedETagFn = fn2
+	o.GetDecryptedETagFn = fn3
 }
 
 // SetETagEncryptionOpts sets opts to a function that adds encrypted

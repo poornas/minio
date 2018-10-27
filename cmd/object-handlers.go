@@ -407,6 +407,21 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
 		}
+		if crypto.IsEncrypted(objInfo.UserDefined) {
+			var key, objectEncryptionKey []byte
+
+			if crypto.S3.IsEncrypted(objInfo.UserDefined) {
+				// Calculating object encryption key
+				objectEncryptionKey, err = decryptObjectInfo(key, bucket, object, objInfo.UserDefined)
+				if err != nil {
+					writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+					return
+				}
+			}
+			// needed for gateway decryption of part ETag
+			opts.UnsealETagFn(objectEncryptionKey, crypto.SSEC.IsEncrypted(objInfo.UserDefined))
+			opts.SetETagEncryptionOpts(nil)
+		}
 	}
 
 	// Validate pre-conditions if any.
@@ -1631,8 +1646,12 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		}
 		if crypto.IsEncrypted(li.UserDefined) {
 			isEncrypted = true
-			if !hasServerSideEncryptionHeader(r.Header) {
+			if !crypto.SSEC.IsRequested(r.Header) && crypto.SSEC.IsEncrypted(li.UserDefined) {
 				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
+				return
+			}
+			if crypto.S3.IsEncrypted(li.UserDefined) && crypto.SSEC.IsRequested(r.Header) {
+				writeErrorResponse(w, ErrIncompatibleEncryptionMethod, r.URL)
 				return
 			}
 			var key []byte
@@ -1671,10 +1690,11 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			pReader.OrigReader.SetEncryptionKey(objectEncryptionKey)
 			pReader.DataReader = srcInfo.Reader
 			dstOpts.SetETagEncryptionOpts(pReader)
-			srcInfo.PutObjectReader = pReader
-			fmt.Println(srcInfo.PutObjectReader, "<-preader..", pReader.DataReader, pReader.OrigReader, dstOpts)
 		}
 	}
+	srcInfo.PutObjectReader = pReader
+	fmt.Println(srcInfo.PutObjectReader, "<-preader..", pReader.DataReader, pReader.OrigReader, dstOpts)
+
 	// Copy source object to destination, if source and destination
 	// object is same then only metadata is updated.
 	var partInfo PartInfo
@@ -2057,7 +2077,6 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-
 	var ssec bool
 	if objectAPI.IsEncryptionSupported() {
 		var li ListPartsInfo
@@ -2081,10 +2100,10 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 				}
 			}
 			parts := make([]PartInfo, len(listPartsInfo.Parts))
-			for _, p := range listPartsInfo.Parts {
+			for i, p := range listPartsInfo.Parts {
 				part := p
 				part.ETag = tryDecryptETag(objectEncryptionKey, p.ETag, ssec)
-				parts = append(parts, part)
+				parts[i] = part
 			}
 			listPartsInfo.Parts = parts
 		}
@@ -2171,7 +2190,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 					return
 				}
 			}
-			opts = UnsealETagFn(objectEncryptionKey, crypto.SSEC.IsEncrypted(li.UserDefined))
+			opts.UnsealETagFn(objectEncryptionKey, crypto.SSEC.IsEncrypted(li.UserDefined))
 			opts.SetETagEncryptionOpts(nil)
 		}
 	}

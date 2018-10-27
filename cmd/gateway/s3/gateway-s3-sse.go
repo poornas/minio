@@ -65,6 +65,7 @@ type s3EncObjects struct {
 		obj/.minio/uploadId/1 <= encrypted part 1
 		obj/.minio/uploadId/2 ...
 		obj/.minio/uploadId/3
+	When a multipart upload is in progress, part metadata is stored in
 */
 
 // ListObjects lists all blobs in S3 bucket filtered by prefix
@@ -96,7 +97,7 @@ func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, contin
 	for {
 		loi, e = l.s3Objects.ListObjectsV2(ctx, bucket, prefix, continuationToken, delimiter, 1000, fetchOwner, startAfter)
 		if e != nil {
-			return loi, e
+			return loi, minio.ErrorRespToObjectError(e, bucket)
 		}
 		for _, obj := range loi.Objects {
 			startAfter = obj.Name
@@ -190,6 +191,7 @@ func isGWObject(objName string) bool {
 // isPrefix returns true if prefix exists and is not an incomplete multipart upload entry
 func (l *s3EncObjects) isPrefix(ctx context.Context, bucket, prefix string, fetchOwner bool, startAfter string) bool {
 	var continuationToken, delimiter string
+
 	for {
 		loi, e := l.s3Objects.ListObjectsV2(ctx, bucket, prefix, continuationToken, delimiter, 1000, fetchOwner, startAfter)
 		if e != nil {
@@ -203,6 +205,7 @@ func (l *s3EncObjects) isPrefix(ctx context.Context, bucket, prefix string, fetc
 				return true
 			}
 		}
+
 		continuationToken = loi.NextContinuationToken
 		if !loi.IsTruncated {
 			break
@@ -242,7 +245,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 
 	// Skip parts until final offset maps to a particular part offset.
 	for i, part := range dmeta.Parts {
-		//fmt.Println(".................................................GO---------------", i, "<==part for ", part)
+		fmt.Println(".................................................GO---------------", i, "<==part for ", part)
 
 		decryptedSize, err := sio.DecryptedSize(uint64(part.Size))
 		if err != nil {
@@ -270,7 +273,15 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 			continue
 		}
 		pInfo, err := l.s3Objects.GetObjectInfo(ctx, bucket, part.Name, o)
-		if err != nil || pInfo.ETag != part.ETag {
+		fmt.Println("have pInfo.ETag=", pInfo.ETag, " === part.ETag=", part.ETag)
+		if err != nil {
+			logger.LogIf(ctx, err)
+			return minio.ObjectNotFound{
+				Bucket: bucket,
+				Object: key,
+			}
+		}
+		if o.GetDecryptedETagFn != nil && pInfo.ETag != o.GetDecryptedETagFn(part.ETag) {
 			logger.LogIf(ctx, err)
 			return minio.ObjectNotFound{
 				Bucket: bucket,
@@ -279,6 +290,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 		}
 
 		partLength := pInfo.Size - partEncRelOffset
+		fmt.Println("pINfo.Size-->", pInfo.Size, " partEncRElOffset=>", partEncRelOffset, "PLENG=", partLength)
 		size += partLength
 		if size > length {
 			partLength -= (size - length)
@@ -305,7 +317,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 		//fmt.Println("copied GONI... .WITH err ", err, " for part::: ", part.Number)
 		if err != nil {
 			logger.LogIf(ctx, err)
-			return err
+			return minio.ErrorRespToObjectError(err)
 		}
 		partStartIndex++
 		partEncRelOffset = 0
@@ -375,7 +387,7 @@ func (l *s3EncObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 	}
 	fn, off, length, err := minio.NewGetObjectReader(rs, objInfo)
 	if err != nil {
-		return nil, err
+		return nil, minio.ErrorRespToObjectError(err)
 	}
 
 	pr, pw := io.Pipe()
@@ -514,7 +526,7 @@ func (l *s3EncObjects) ListMultipartUploads(ctx context.Context, bucket string, 
 	for {
 		loi, err := l.s3Objects.ListObjectsV2(ctx, bucket, prefix, continuationToken, delimiter, 1000, false, startAfter)
 		if err != nil {
-			return lmi, err
+			return lmi, minio.ErrorRespToObjectError(err, bucket)
 		}
 		for _, obj := range loi.Objects {
 			startAfter = obj.Name
@@ -565,14 +577,14 @@ func (l *s3EncObjects) ListMultipartUploads(ctx context.Context, bucket string, 
 // NewMultipartUpload uploads object in multiple parts
 func (l *s3EncObjects) NewMultipartUpload(ctx context.Context, bucket string, object string, metadata map[string]string, o minio.ObjectOptions) (uploadID string, err error) {
 	// Create uploadID and write a temporary dare.meta object under object/uploadID prefix
-	if (len(minio.GlobalGatewaySSE) > 0) && o.ServerSideEncryption != nil {
+	if len(minio.GlobalGatewaySSE) > 0 {
 		uploadID := minio.MustGetUUID()
 		gwmeta := newGWMetaV1()
 		gwmeta.Meta = metadata
 		gwmeta.Stat.ModTime = time.Now().UTC()
 		err := l.writeGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID), gwmeta, minio.ObjectOptions{})
 		if err != nil {
-			return uploadID, err
+			return uploadID, minio.ErrorRespToObjectError(err)
 		}
 		return uploadID, nil
 	}
@@ -588,7 +600,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 		wasEncrypted := l.isGWEncrypted(ctx, bucket, object)
 		oi, err := l.s3Objects.PutObject(ctx, bucket, object, data, metadata, opts)
 		if err != nil {
-			return objInfo, err
+			return objInfo, minio.ErrorRespToObjectError(err)
 		}
 		if wasEncrypted {
 			l.deleteEncryptedObject(ctx, bucket, object)
@@ -601,7 +613,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 
 	oi, err := l.s3Objects.PutObject(ctx, bucket, getGWContentPath(object), data, map[string]string{}, opts)
 	if err != nil {
-		return objInfo, err
+		return objInfo, minio.ErrorRespToObjectError(err)
 	}
 
 	gwMeta := newGWMetaV1()
@@ -624,7 +636,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	gwMeta.Stat.Size = oi.Size
 	gwMeta.Stat.ModTime = oi.ModTime
 	if err = l.writeGWMetadata(ctx, bucket, getDareMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
-		return objInfo, err
+		return objInfo, minio.ErrorRespToObjectError(err)
 	}
 	objInfo = gwMeta.ToObjectInfo(bucket, object)
 
@@ -655,7 +667,7 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 	oi, err := l.s3Objects.PutObject(ctx, bucket, partUploadName, data, map[string]string{}, s3Opts)
 	if err != nil {
 		fmt.Println("err....2 :", err)
-		return pi, err
+		return pi, minio.ErrorRespToObjectError(err)
 	}
 	gwMeta := newGWMetaV1()
 	gwMeta.Parts = make([]minio.ObjectPartInfo, 1)
@@ -663,7 +675,7 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 		encMD5, _, err := opts.CreateEncryptedETagFn()
 		if err != nil {
 			fmt.Println("err #3:", err)
-			return pi, err
+			return pi, minio.ErrorRespToObjectError(err)
 		}
 
 		// Add incoming part.
@@ -679,7 +691,7 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 	}
 	if err = l.writeGWMetadata(ctx, bucket, getPartMetaPath(object, uploadID, partID, oi.ETag), gwMeta, minio.ObjectOptions{}); err != nil {
 		fmt.Println("err #4", err)
-		return pi, err
+		return pi, minio.ErrorRespToObjectError(err)
 	}
 
 	return minio.PartInfo{
@@ -707,7 +719,7 @@ func (l *s3EncObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject,
 	// if err != nil {
 	// 	return p, minio.InvalidUploadID{UploadID: uploadID}
 	// }
-	fmt.Println("srcINfo.PutObjectReader should not be nil....", srcInfo.PutObjectReader)
+	fmt.Println("srcINfo.PutObjectReader should not be nil....", srcInfo.PutObjectReader, srcOpts, dstOpts, srcInfo.Reader)
 	return l.PutObjectPart(ctx, destBucket, destObject, uploadID, partID, srcInfo.PutObjectReader, dstOpts)
 	/*
 		if err != nil {
@@ -736,6 +748,7 @@ func (l *s3EncObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject,
 }
 
 // ListObjectParts returns all object parts for specified object in specified bucket
+
 func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, object string, uploadID string, partNumberMarker int, maxParts int, opts minio.ObjectOptions) (lpi minio.ListPartsInfo, e error) {
 	if len(minio.GlobalGatewaySSE) == 0 {
 		return l.s3Objects.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)
@@ -747,6 +760,7 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	if err != nil {
 		return l.s3Objects.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)
 	}
+
 	lpi.Parts = make([]minio.PartInfo, 0)
 	lpi.UserDefined = dm.Meta
 	lpi.Bucket = bucket
@@ -767,33 +781,32 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	for {
 		loi, err = l.s3Objects.ListObjectsV2(ctx, bucket, uploadPrefix, continuationToken, delimiter, 1000, false, startAfter)
 		if err != nil {
-			return lpi, err
+			return lpi, minio.ErrorRespToObjectError(err, bucket)
 		}
 		for _, obj := range loi.Objects {
 			startAfter = obj.Name
 			if !strings.HasPrefix(obj.Name, uploadPrefix) {
 				return lpi, nil
 			}
-			if strings.HasSuffix(obj.Name, gwdareMetaJSON) {
+			if strings.HasSuffix(obj.Name, gwdareMetaJSON) || strings.HasSuffix(obj.Name, gwpartMetaJSON) {
 				continue
 			}
-
-			partNumStr := strings.TrimLeft(obj.Name, path.Join(object, defaultMinioGWPrefix, uploadID, ""))
+			partNumStr := strings.TrimPrefix(obj.Name, path.Join(object, defaultMinioGWPrefix, uploadID)+slashSeparator)
 			partNum, _ := strconv.Atoi(partNumStr)
+
 			if partNum < partNumberMarker {
 				continue
 			}
-			var etag string
-			// use encrypted etag if set
-			if opts.GetEncryptedETagMetaFn != nil {
-				etag = opts.GetEncryptedETagMetaFn(obj)
+			partMeta, err := l.getGWMetadata(ctx, bucket, path.Join(obj.Name, obj.ETag, gwpartMetaJSON))
+			if err != nil || len(partMeta.Parts) == 0 {
+				return lpi, minio.InvalidPart{}
 			}
 			if partNum > 0 {
 				pi := minio.PartInfo{
 					PartNumber:   partNum,
-					Size:         obj.Size,
-					ETag:         etag,
-					LastModified: obj.ModTime,
+					Size:         partMeta.Stat.Size,
+					ETag:         partMeta.ETag,
+					LastModified: partMeta.Stat.ModTime,
 				}
 				lpi.Parts = append(lpi.Parts, pi)
 			}
@@ -831,7 +844,7 @@ func (l *s3EncObjects) AbortMultipartUpload(ctx context.Context, bucket string, 
 				return nil
 			}
 			if err := l.s3Objects.DeleteObject(ctx, bucket, obj.Name); err != nil {
-				return err
+				return minio.ErrorRespToObjectError(err)
 			}
 			startAfter = obj.Name
 		}
@@ -861,7 +874,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	s3MD5, err := minio.GetCompleteMultipartMD5(ctx, uploadedParts)
 	if err != nil {
 		//fmt.Println("\n#1")
-		return oi, err
+		return oi, minio.ErrorRespToObjectError(err, bucket)
 	}
 	gwMeta := newGWMetaV1()
 	gwMeta.Meta = make(map[string]string)
@@ -939,7 +952,7 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		// Add incoming parts.
 		gwMeta.Parts[i] = minio.ObjectPartInfo{
 			Number: part.PartNumber,
-			ETag:   partETag, //save encrypted ETag
+			ETag:   partMeta.ETag, //save encrypted ETag
 			Size:   partInfo.Size,
 			Name:   partInfo.Name,
 		}
@@ -982,11 +995,11 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		}
 	}
 	if err = l.writeGWMetadata(ctx, bucket, getDareMetaPath(object), gwMeta, minio.ObjectOptions{}); err != nil {
-		return oi, err
+		return oi, minio.ErrorRespToObjectError(err)
 	}
 	// clean up temporary upload dare.meta file under uploadID prefix
 	if err = l.deleteGWMetadata(ctx, bucket, getTmpGWMetaPath(object, uploadID)); err != nil {
-		return oi, err
+		return oi, minio.ErrorRespToObjectError(err)
 	}
 	return gwMeta.ToObjectInfo(bucket, object), nil
 }
