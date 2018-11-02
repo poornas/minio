@@ -19,6 +19,7 @@ package s3
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -339,6 +340,7 @@ func (l *s3Objects) ListObjects(ctx context.Context, bucket string, prefix strin
 func (l *s3Objects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (loi minio.ListObjectsV2Info, e error) {
 
 	result, err := l.Client.ListObjectsV2(bucket, prefix, continuationToken, fetchOwner, delimiter, maxKeys, startAfter)
+	fmt.Println(result.Contents, "<== S3 returned")
 	if err != nil {
 		return loi, minio.ErrorRespToObjectError(err, bucket)
 	}
