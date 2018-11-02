@@ -238,10 +238,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	if shouldSetSSEHeaders() {
 		o = opts
 	}
-	// pass through encryption
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.GetObject(ctx, bucket, key, startOffset, length, writer, etag, o)
-	}
+
 	dmeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(key))
 	if err != nil {
 		// unencrypted content
@@ -384,9 +381,6 @@ func (l *s3EncObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 	if shouldSetSSEHeaders() {
 		opts = o
 	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
-	}
 
 	objInfo, err := l.GetObjectInfo(ctx, bucket, object, opts)
 	if err != nil {
@@ -415,9 +409,6 @@ func (l *s3EncObjects) GetObjectInfo(ctx context.Context, bucket string, object 
 	if shouldSetSSEHeaders() {
 		opts = o
 	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.GetObjectInfo(ctx, bucket, object, opts)
-	}
 	gwMeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object))
 	if err != nil {
 		return l.s3Objects.GetObjectInfo(ctx, bucket, object, opts)
@@ -427,14 +418,12 @@ func (l *s3EncObjects) GetObjectInfo(ctx context.Context, bucket string, object 
 
 // CopyObject copies an object from source bucket to a destination bucket.
 func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObject string, dstBucket string, dstObject string, srcInfo minio.ObjectInfo, s, d minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	var srcOpts, dstOpts minio.ObjectOptions
-	if shouldSetSSEHeaders() {
-		srcOpts = s
-		dstOpts = d
-	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.CopyObject(ctx, srcBucket, srcObject, dstBucket, dstObject, srcInfo, srcOpts, dstOpts)
-	}
+	// var srcOpts, dstOpts minio.ObjectOptions
+	// if shouldSetSSEHeaders() {
+	// 	srcOpts = s
+	// 	dstOpts = d
+	// }
+
 	return l.PutObject(ctx, dstBucket, dstObject, srcInfo.PutObjectReader, srcInfo.UserDefined, d)
 }
 
@@ -442,9 +431,7 @@ func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObje
 // For custom gateway encrypted large objects, cleans up individual parts and metadata files
 // from the backend.
 func (l *s3EncObjects) DeleteObject(ctx context.Context, bucket string, object string) error {
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.DeleteObject(ctx, bucket, object)
-	}
+
 	// Get dare meta json
 	if _, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object)); err != nil {
 		return l.s3Objects.DeleteObject(ctx, bucket, object)
@@ -471,9 +458,6 @@ func (l *s3EncObjects) deleteEncryptedObject(ctx context.Context, bucket string,
 
 // ListMultipartUploads lists all multipart uploads.
 func (l *s3EncObjects) ListMultipartUploads(ctx context.Context, bucket string, prefix string, keyMarker string, uploadIDMarker string, delimiter string, maxUploads int) (lmi minio.ListMultipartsInfo, e error) {
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.ListMultipartUploads(ctx, bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
-	}
 	var uploadsMap map[string]string
 	var uploadIDs []string
 	var continuationToken, startAfter string
@@ -544,18 +528,19 @@ func (l *s3EncObjects) NewMultipartUpload(ctx context.Context, bucket string, ob
 		opts = o
 	}
 	// Create uploadID and write a temporary dare.meta object under object/uploadID prefix
-	if len(minio.GlobalGatewaySSE) > 0 {
-		uploadID := minio.MustGetUUID()
-		gwmeta := newGWMetaV1()
-		gwmeta.Meta = metadata
-		gwmeta.Stat.ModTime = time.Now().UTC()
-		err := l.writeGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID), gwmeta, minio.ObjectOptions{})
-		if err != nil {
-			return uploadID, minio.ErrorRespToObjectError(err)
-		}
-		return uploadID, nil
+	// if len(minio.GlobalGatewaySSE) > 0 {
+	uploadID, err = l.s3Objects.NewMultipartUpload(ctx, bucket, object, metadata, opts)
+	uploadID = minio.MustGetUUID()
+	gwmeta := newGWMetaV1()
+	gwmeta.Meta = metadata
+	gwmeta.Stat.ModTime = time.Now().UTC()
+	err = l.writeGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID), gwmeta, minio.ObjectOptions{})
+	if err != nil {
+		return uploadID, minio.ErrorRespToObjectError(err)
 	}
-	return l.s3Objects.NewMultipartUpload(ctx, bucket, object, metadata, opts)
+	return uploadID, nil
+	// }
+	// return l.s3Objects.NewMultipartUpload(ctx, bucket, object, metadata, opts)
 }
 
 // PutObject creates a new object with the incoming data,
@@ -564,9 +549,7 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	if shouldSetSSEHeaders() {
 		s3Opts = opts
 	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.PutObject(ctx, bucket, object, data, metadata, s3Opts)
-	}
+
 	if opts.ServerSideEncryption == nil {
 		wasEncrypted := l.isGWEncrypted(ctx, bucket, object)
 		oi, err := l.s3Objects.PutObject(ctx, bucket, object, data, metadata, s3Opts)
@@ -619,9 +602,7 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 	if opts.ServerSideEncryption != nil && opts.ServerSideEncryption.Type() == encrypt.SSEC && shouldSetSSEHeaders() {
 		s3Opts = opts
 	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.PutObjectPart(ctx, bucket, object, uploadID, partID, data, s3Opts)
-	}
+
 	uploadPath := getTmpGWMetaPath(object, uploadID)
 	tmpDareMeta := path.Join(uploadPath, gwdareMetaJSON)
 	_, err := l.s3Objects.GetObjectInfo(ctx, bucket, tmpDareMeta, minio.ObjectOptions{})
@@ -669,15 +650,11 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 // existing object or a part of it.
 func (l *s3EncObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string,
 	partID int, startOffset, length int64, srcInfo minio.ObjectInfo, s, d minio.ObjectOptions) (p minio.PartInfo, err error) {
-	var srcOpts, dstOpts minio.ObjectOptions
+	var dstOpts minio.ObjectOptions
 	if shouldSetSSEHeaders() {
-		srcOpts = s
 		dstOpts = d
 	}
-	// pass through encryption
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.CopyObjectPart(ctx, srcBucket, srcObject, destBucket, destObject, uploadID, partID, startOffset, length, srcInfo, srcOpts, dstOpts)
-	}
+
 	return l.PutObjectPart(ctx, destBucket, destObject, uploadID, partID, srcInfo.PutObjectReader, dstOpts)
 }
 
@@ -687,9 +664,7 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	if shouldSetSSEHeaders() {
 		opts = o
 	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)
-	}
+
 	// We do not store parts uploaded so far in the dare.meta. Only CompleteMultipartUpload finalizes the parts under upload prefix.Otherwise,
 	// there could be situations of dare.meta getting corrupted by competing upload parts.
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
@@ -765,9 +740,6 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 
 // AbortMultipartUpload aborts a ongoing multipart upload
 func (l *s3EncObjects) AbortMultipartUpload(ctx context.Context, bucket string, object string, uploadID string) error {
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.AbortMultipartUpload(ctx, bucket, object, uploadID)
-	}
 
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
 	var continuationToken, startAfter, delimiter string
@@ -795,13 +767,11 @@ func (l *s3EncObjects) AbortMultipartUpload(ctx context.Context, bucket string, 
 
 // CompleteMultipartUpload completes ongoing multipart upload and finalizes object
 func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (oi minio.ObjectInfo, e error) {
-	var s3Opts minio.ObjectOptions
-	if shouldSetSSEHeaders() {
-		s3Opts = opts
-	}
-	if len(minio.GlobalGatewaySSE) == 0 {
-		return l.s3Objects.CompleteMultipartUpload(ctx, bucket, object, uploadID, uploadedParts, s3Opts)
-	}
+	// var s3Opts minio.ObjectOptions
+	// if shouldSetSSEHeaders() {
+	// 	s3Opts = opts
+	// }
+
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
 	dareMeta, err := l.getGWMetadata(ctx, bucket, getTmpDareMetaPath(object, uploadID))
 	if err != nil {
