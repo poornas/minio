@@ -219,16 +219,16 @@ func (l *s3EncObjects) isPrefix(ctx context.Context, bucket, prefix string, fetc
 // shouldSetSSEHeaders returns true if sse mode specifies
 // backend encryption
 func shouldSetSSEHeaders() bool {
-	for _, v := range minio.GlobalGatewaySSEMode {
-		if v == minio.GatewaySSEBackendEncrypt {
-			return true
-		}
-	}
+	// for _, v := range minio.GlobalGatewaySSEMode {
+	// 	if v == minio.GatewaySSEBackendEncrypt {
+	// 		return true
+	// 	}
+	// }
 	return false
 }
 
 // GetObject reads an object from S3. Supports additional
-// parameters like offset and length which are synonymous with
+// parameters like offset and length which are synonymous witGlobalGatewaySSEModeh
 // HTTP Range requests.
 // In the case of multi-part uploads that were encrypted at the gateway, the objects
 // are stored in a custom format at the backend with each part as an individual object
