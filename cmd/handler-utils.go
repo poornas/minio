@@ -205,7 +205,7 @@ func extractReqParams(r *http.Request) map[string]string {
 func extractRespElements(w http.ResponseWriter) map[string]string {
 
 	return map[string]string{
-		"requestId":      w.Header().Get("x-amz-request-id"),
+		"requestId":      w.Header().Get(responseRequestIDKey),
 		"content-length": w.Header().Get("Content-Length"),
 		// Add more fields here.
 	}

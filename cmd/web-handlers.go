@@ -707,11 +707,7 @@ func (web *webAPIHandlers) CreateURLToken(r *http.Request, args *WebGenericArgs,
 func (web *webAPIHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "WebUpload")
 
-	defer logger.AuditLog(ctx, r)
-	reqParams := extractReqParams(r)
-	for k, v := range reqParams {
-		logger.GetReqInfo(ctx).SetTags(k, v)
-	}
+	defer logger.AuditLog(ctx, w, r)
 
 	objectAPI := web.ObjectAPI()
 	if objectAPI == nil {
@@ -841,29 +837,19 @@ func (web *webAPIHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 		EventName:    event.ObjectCreatedPut,
 		BucketName:   bucket,
 		Object:       objInfo,
-		ReqParams:    reqParams,
+		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
 		Host:         host,
 		Port:         port,
 	})
-
-	for k, v := range objInfo.UserDefined {
-		logger.GetReqInfo(ctx).SetTags(k, v)
-	}
-
-	logger.GetReqInfo(ctx).SetTags("etag", objInfo.ETag)
 }
 
 // Download - file download handler.
 func (web *webAPIHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "WebDownload")
 
-	defer logger.AuditLog(ctx, r)
-	reqParams := extractReqParams(r)
-	for k, v := range reqParams {
-		logger.GetReqInfo(ctx).SetTags(k, v)
-	}
+	defer logger.AuditLog(ctx, w, r)
 
 	var wg sync.WaitGroup
 	objectAPI := web.ObjectAPI()
@@ -1019,18 +1005,12 @@ func (web *webAPIHandlers) Download(w http.ResponseWriter, r *http.Request) {
 		EventName:    event.ObjectAccessedGet,
 		BucketName:   bucket,
 		Object:       objInfo,
-		ReqParams:    reqParams,
+		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
 		Host:         host,
 		Port:         port,
 	})
-
-	for k, v := range objInfo.UserDefined {
-		logger.GetReqInfo(ctx).SetTags(k, v)
-	}
-
-	logger.GetReqInfo(ctx).SetTags("etag", objInfo.ETag)
 }
 
 // DownloadZipArgs - Argument for downloading a bunch of files as a zip file.
@@ -1051,7 +1031,7 @@ func (web *webAPIHandlers) DownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := newContext(r, w, "WebDownloadZip")
-	reqParams := extractReqParams(r)
+	defer logger.AuditLog(ctx, w, r)
 
 	var wg sync.WaitGroup
 	objectAPI := web.ObjectAPI()
@@ -1131,11 +1111,6 @@ func (web *webAPIHandlers) DownloadZip(w http.ResponseWriter, r *http.Request) {
 	for _, object := range args.Objects {
 		// Writes compressed object file to the response.
 		zipit := func(objectName string) error {
-			defer logger.AuditLog(ctx, r)
-			for k, v := range reqParams {
-				logger.GetReqInfo(ctx).SetTags(k, v)
-			}
-
 			info, err := getObjectInfo(ctx, args.BucketName, objectName, opts)
 			if err != nil {
 				return err
@@ -1233,7 +1208,7 @@ func (web *webAPIHandlers) DownloadZip(w http.ResponseWriter, r *http.Request) {
 				EventName:    event.ObjectAccessedGet,
 				BucketName:   args.BucketName,
 				Object:       info,
-				ReqParams:    reqParams,
+				ReqParams:    extractReqParams(r),
 				RespElements: extractRespElements(w),
 				UserAgent:    r.UserAgent(),
 				Host:         host,

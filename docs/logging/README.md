@@ -1,7 +1,7 @@
 # Minio Logging Quickstart Guide [![Slack](https://slack.minio.io/slack?type=svg)](https://slack.minio.io)
-This document explains how to configure Minio server to log to different targets.
+This document explains how to configure Minio server to log to different logging targets.
 
-## Targets
+## Log Targets
 Minio supports currently two target types
 
 - console
@@ -61,31 +61,44 @@ mc admin config set myminio/ < /tmp/config
 mc admin restart myminio/
 ```
 
-Additionally Minio also honors environment variable for HTTP target.
+Minio also honors environment variable for HTTP target logging as shown below, this setting will override the endpoint settings in the Minio server config.
 ```
-MINIO_LOGGER_HTTP_ENDPOINT=http://localhost:8080/ minio server /mnt/data
+MINIO_LOGGER_HTTP_ENDPOINT=http://localhost:8080/minio/logs minio server /mnt/data
 ```
 
-NOTE: In case of HTTP endpoint Minio automatically enables audit logging, i.e we log each incoming request to HTTP target. The audit log JSON format is as follows
+## Audit Targets
+For audit logging Minio supports only HTTP target type for now. Audit logging is currently only available through environment variable.
+```
+MINIO_AUDIT_LOGGER_HTTP_ENDPOINT=http://localhost:8080/minio/logs/audit minio server /mnt/data
+```
+
+Setting this environment variable automatically enables audit logging to the HTTP target. The audit logging is in JSON format as described below.
 ```json
 {
   "version": "1",
-  "time": "2018-10-30T23:59:08.831972892Z",
+  "deploymentid": "1b3002bf-5005-4d9b-853e-64a05008ebb2",
+  "time": "2018-11-02T21:57:58.231480177Z",
   "api": {
-    "name": "PutObject",
-    "args": {
-      "bucket": "ersan",
-      "object": "hosts"
-    }
+    "name": "ListBuckets",
+    "args": {}
   },
   "remotehost": "127.0.0.1",
-  "requestID": "1562885B6A24D20F",
-  "userAgent": "Minio (linux; amd64) minio-go/v6.0.8 mc/2018-10-29T19:07:05Z",
-  "metadata": {
-    "accessKey": "Q3AM3UQ867SPQQA43P2F",
-    "etag": "6e5ad789aa1b14afcd57efc596408bb2",
-    "region": "",
-    "sourceIPAddress": "127.0.0.1"
+  "requestID": "15636D7C53428FD4",
+  "userAgent": "Minio (linux; amd64) minio-go/v6.0.8 mc/2018-11-02T21:13:30Z",
+  "requestHeader": {
+    "Authorization": "AWS4-HMAC-SHA256 Credential=minio/20181102/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=6db486b42a85b23bffba66d654ce60242a7e92fb27cd4a1756e68082c02cc204",
+    "User-Agent": "Minio (linux; amd64) minio-go/v6.0.8 mc/2018-11-02T21:13:30Z",
+    "X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "X-Amz-Date": "20181102T215758Z"
+  },
+  "responseHeader": {
+    "Accept-Ranges": "bytes",
+    "Content-Security-Policy": "block-all-mixed-content",
+    "Content-Type": "application/xml",
+    "Server": "Minio/DEVELOPMENT.2018-11-02T21-57-15Z (linux; amd64)",
+    "Vary": "Origin",
+    "X-Amz-Request-Id": "15636D7C53428FD4",
+    "X-Xss-Protection": "1; mode=block"
   }
 }
 ```

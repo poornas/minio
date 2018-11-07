@@ -598,5 +598,5 @@ func (l *s3Objects) IsCompressionSupported() bool {
 
 // IsEncryptionSupported returns whether server side encryption is applicable for this layer.
 func (l *s3Objects) IsEncryptionSupported() bool {
-	return len(minio.GlobalGatewaySSE) > 0
+	return len(minio.GlobalGatewaySSE) > 0 || minio.GlobalKMS != nil
 }

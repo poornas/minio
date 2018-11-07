@@ -160,16 +160,40 @@ func rotateKey(oldKey []byte, newKey []byte, bucket, object string, metadata map
 		sealedKey = objectKey.Seal(extKey, sealedKey.IV, crypto.SSEC.String(), bucket, object)
 		crypto.SSEC.CreateMetadata(metadata, sealedKey)
 		return nil
+	case crypto.S3.IsEncrypted(metadata):
+		if GlobalKMS == nil {
+			return errKMSNotConfigured
+		}
+		keyID, kmsKey, sealedKey, err := crypto.S3.ParseMetadata(metadata)
+		if err != nil {
+			return err
+		}
+		oldKey, err := GlobalKMS.UnsealKey(keyID, kmsKey, crypto.Context{bucket: path.Join(bucket, object)})
+		if err != nil {
+			return err
+		}
+		var objectKey crypto.ObjectKey
+		if err = objectKey.Unseal(oldKey, sealedKey, crypto.S3.String(), bucket, object); err != nil {
+			return err
+		}
+
+		newKey, encKey, err := GlobalKMS.GenerateKey(globalKMSKeyID, crypto.Context{bucket: path.Join(bucket, object)})
+		if err != nil {
+			return err
+		}
+		sealedKey = objectKey.Seal(newKey, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
+		crypto.S3.CreateMetadata(metadata, globalKMSKeyID, encKey, sealedKey)
+		return nil
 	}
 }
 
 func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]string, sseS3 bool) ([]byte, error) {
 	var sealedKey crypto.SealedKey
 	if sseS3 {
-		if globalKMS == nil {
+		if GlobalKMS == nil {
 			return nil, errKMSNotConfigured
 		}
-		key, encKey, err := globalKMS.GenerateKey(globalKMSKeyID, crypto.Context{bucket: path.Join(bucket, object)})
+		key, encKey, err := GlobalKMS.GenerateKey(globalKMSKeyID, crypto.Context{bucket: path.Join(bucket, object)})
 		if err != nil {
 			return nil, err
 		}
@@ -276,7 +300,7 @@ func decryptObjectInfo(key []byte, bucket, object string, metadata map[string]st
 	default:
 		return nil, errObjectTampered
 	case crypto.S3.IsEncrypted(metadata):
-		if globalKMS == nil {
+		if GlobalKMS == nil {
 			return nil, errKMSNotConfigured
 		}
 		keyID, kmsKey, sealedKey, err := crypto.S3.ParseMetadata(metadata)
@@ -284,7 +308,7 @@ func decryptObjectInfo(key []byte, bucket, object string, metadata map[string]st
 		if err != nil {
 			return nil, err
 		}
-		extKey, err := globalKMS.UnsealKey(keyID, kmsKey, crypto.Context{bucket: path.Join(bucket, object)})
+		extKey, err := GlobalKMS.UnsealKey(keyID, kmsKey, crypto.Context{bucket: path.Join(bucket, object)})
 		if err != nil {
 			return nil, err
 		}

@@ -31,10 +31,10 @@ import (
 
 	"github.com/minio/minio-go/pkg/encrypt"
 	minio "github.com/minio/minio/cmd"
-	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/sio"
 
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/hash"
 )
 
 const (
@@ -89,7 +89,6 @@ func (l *s3EncObjects) ListObjects(ctx context.Context, bucket string, prefix st
 
 // ListObjectsV2 lists all blobs in S3 bucket filtered by prefix
 func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (loi minio.ListObjectsV2Info, e error) {
-
 	var objects []minio.ObjectInfo
 	var prefixes []string
 	var isTruncated bool
@@ -99,7 +98,6 @@ func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, contin
 		if e != nil {
 			return loi, minio.ErrorRespToObjectError(e, bucket)
 		}
-		fmt.Println(loi.Objects, len(loi.Objects), "<===111")
 		for _, obj := range loi.Objects {
 			startAfter = obj.Name
 			continuationToken = loi.NextContinuationToken
@@ -253,7 +251,6 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 	if shouldSetSSEHeaders() {
 		o = opts
 	}
-
 	dmeta, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(key))
 	if err != nil {
 		// unencrypted content
@@ -318,7 +315,7 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 		if size > length {
 			partLength -= (size - length)
 		}
-	}
+
 		fmt.Println("partLength ...>", partLength, " size::: ", size)
 		pipeReader, pipeWriter := io.Pipe()
 
@@ -347,7 +344,6 @@ func (l *s3EncObjects) GetObject(ctx context.Context, bucket string, key string,
 		partEncRelOffset = 0
 	}
 	return nil
-
 }
 
 func (l *s3EncObjects) isGWEncrypted(ctx context.Context, bucket, object string) bool {
@@ -450,7 +446,6 @@ func (l *s3EncObjects) CopyObject(ctx context.Context, srcBucket string, srcObje
 // For custom gateway encrypted large objects, cleans up individual parts and metadata files
 // from the backend.
 func (l *s3EncObjects) DeleteObject(ctx context.Context, bucket string, object string) error {
-
 	// Get dare meta json
 	if _, err := l.getGWMetadata(ctx, bucket, getDareMetaPath(object)); err != nil {
 		return l.s3Objects.DeleteObject(ctx, bucket, object)
@@ -572,7 +567,6 @@ func (l *s3EncObjects) PutObject(ctx context.Context, bucket string, object stri
 	if shouldSetSSEHeaders() {
 		s3Opts = opts
 	}
-
 	if opts.ServerSideEncryption == nil {
 		wasEncrypted := l.isGWEncrypted(ctx, bucket, object)
 		oi, err := l.s3Objects.PutObject(ctx, bucket, object, data, metadata, s3Opts)
@@ -625,7 +619,6 @@ func (l *s3EncObjects) PutObjectPart(ctx context.Context, bucket string, object 
 	if opts.ServerSideEncryption != nil && opts.ServerSideEncryption.Type() == encrypt.SSEC && shouldSetSSEHeaders() {
 		s3Opts = opts
 	}
-
 	uploadPath := getTmpGWMetaPath(object, uploadID)
 	tmpDareMeta := path.Join(uploadPath, gwdareMetaJSON)
 	_, err := l.s3Objects.GetObjectInfo(ctx, bucket, tmpDareMeta, minio.ObjectOptions{})
@@ -687,7 +680,6 @@ func (l *s3EncObjects) ListObjectParts(ctx context.Context, bucket string, objec
 	if shouldSetSSEHeaders() {
 		opts = o
 	}
-
 	// We do not store parts uploaded so far in the dare.meta. Only CompleteMultipartUpload finalizes the parts under upload prefix.Otherwise,
 	// there could be situations of dare.meta getting corrupted by competing upload parts.
 	uploadPrefix := getTmpGWMetaPath(object, uploadID)
@@ -938,7 +930,6 @@ func (l *s3EncObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 			break
 		}
 	}
-
 	return gwMeta.ToObjectInfo(bucket, object), nil
 }
 

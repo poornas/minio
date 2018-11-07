@@ -40,7 +40,7 @@ const (
 func (api objectAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutBucketPolicy")
 
-	defer logger.AuditLog(ctx, r)
+	defer logger.AuditLog(ctx, w, r)
 
 	for k, v := range extractReqParams(r) {
 		logger.GetReqInfo(ctx).SetTags(k, v)
@@ -107,7 +107,7 @@ func (api objectAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *ht
 func (api objectAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "DeleteBucketPolicy")
 
-	defer logger.AuditLog(ctx, r)
+	defer logger.AuditLog(ctx, w, r)
 
 	for k, v := range extractReqParams(r) {
 		logger.GetReqInfo(ctx).SetTags(k, v)
@@ -149,7 +149,7 @@ func (api objectAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r 
 func (api objectAPIHandlers) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "GetBucketPolicy")
 
-	defer logger.AuditLog(ctx, r)
+	defer logger.AuditLog(ctx, w, r)
 
 	for k, v := range extractReqParams(r) {
 		logger.GetReqInfo(ctx).SetTags(k, v)

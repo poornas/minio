@@ -370,7 +370,7 @@ func handleGatewayEnvVars() {
 		GlobalGatewaySSE = gwsseSlice
 	}
 
-	if globalKMS == nil && len(gwsse) != 0 {
+	if GlobalKMS == nil && len(gwsse) != 0 {
 		logger.Fatal(uiErrInvalidGWSSEEnvValue(nil).Msg("MINIO_GW_SSE set but KMS not enabled"), "Unable to start gateway with sse")
 	}
 }
