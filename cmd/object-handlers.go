@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	goioutil "io/ioutil"
 	"net"
@@ -1802,9 +1803,11 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	var li ListPartsInfo
 	li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
 	if err != nil {
+		fmt.Println("LOP oh returned err....", err)
 		writeErrorResponse(w, toAPIErrorCode(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
+	fmt.Println("loi.......returnerd.....", li)
 	// Read compression metadata preserved in the init multipart for the decision.
 	_, compressPart := li.UserDefined[ReservedMetadataPrefix+"compression"]
 
@@ -1936,7 +1939,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 // AbortMultipartUploadHandler - Abort multipart upload
 func (api objectAPIHandlers) AbortMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "AbortMultipartUpload")
-
+	fmt.Println("abort upload handler....")
 	defer logger.AuditLog(w, r, "AbortMultipartUpload", mustGetClaimsFromToken(r))
 
 	vars := mux.Vars(r)
@@ -2119,6 +2122,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	if objectAPI.IsEncryptionSupported() {
 		var li ListPartsInfo
 		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
+		fmt.Println("li::: ", li, " err////", err)
 		if err != nil {
 			writeErrorResponse(w, toAPIErrorCode(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
@@ -2152,6 +2156,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 			}
 			for _, part := range listPartsInfo.Parts {
 				partsMap[strconv.Itoa(part.PartNumber)] = part
+				fmt.Println("got part....", part)
 			}
 			partNumberMarker = listPartsInfo.NextPartNumberMarker
 			if !listPartsInfo.IsTruncated {
@@ -2187,6 +2192,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	if api.CacheAPI() != nil {
 		completeMultiPartUpload = api.CacheAPI().CompleteMultipartUpload
 	}
+	fmt.Println("before cmu.....oh")
 	objInfo, err := completeMultiPartUpload(ctx, bucket, object, uploadID, completeParts, opts)
 	if err != nil {
 		switch oErr := err.(type) {

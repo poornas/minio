@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,8 +51,10 @@ const (
 	azureBlockSize             = 100 * humanize.MiByte
 	azureS3MinPartSize         = 5 * humanize.MiByte
 	metadataObjectNameTemplate = minio.GatewayMinioSysTmp + "multipart/v1/%s.%x/azure.json"
-	azureBackend               = "azure"
-	azureMarkerPrefix          = "{minio}"
+	metadataPartNamePrefix     = minio.GatewayMinioSysTmp + "multipart/v1/%s.%x"
+
+	azureBackend      = "azure"
+	azureMarkerPrefix = "{minio}"
 )
 
 func init() {
@@ -261,6 +264,30 @@ func s3MetaToAzureProperties(ctx context.Context, s3Metadata map[string]string) 
 	return blobMeta, props, nil
 }
 
+const (
+	partMetaVersionV1 = "1"
+)
+
+// partMetadataV1 struct holds the part specific metadata for
+// multipart operations.
+type partMetadataV1 struct {
+	Version  string   `json:"version"`
+	UploadID string   `json:"uploadID"`
+	PartID   string   `json:"partID"`
+	Size     int64    `json:"Size"`
+	BlockIDs []string `json:"blockIDs"`
+	MD5Sum   string   `json:"md5sum"`
+}
+
+// Returns the initialized part metadata struct
+func newPartMetaV1(uploadID string, partID int) (partMeta *partMetadataV1) {
+	p := &partMetadataV1{}
+	p.Version = partMetaVersionV1
+	p.UploadID = uploadID
+	p.PartID = strconv.Itoa(partID)
+	return p
+}
+
 // azurePropertiesToS3Meta converts Azure metadata/properties to S3
 // metadata. It is the reverse of s3MetaToAzureProperties. Azure's
 // `.GetMetadata()` lower-cases all header keys, so this is taken into
@@ -436,6 +463,20 @@ func azureParseBlockID(blockID string) (partID, subPartNumber int, uploadID, md5
 	uploadID = tokens[2]
 	md5Hex = tokens[3]
 
+	return
+}
+
+// parses partID
+func parseAzurePart(metaPartFileName, prefix string) (partID int, err error) {
+	fmt.Println(metaPartFileName, "::", prefix)
+	partStr := strings.TrimPrefix(metaPartFileName, prefix+"/")
+	partStr = strings.TrimSuffix(partStr, ".json")
+	fmt.Println(partStr, "<===")
+	if partID, err = strconv.Atoi(partStr); err != nil || partID <= 0 {
+		err = fmt.Errorf("invalid part number in block id '%s'", string(partID))
+		return
+	}
+	fmt.Println("partID...", partID)
 	return
 }
 
@@ -747,14 +788,11 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 		return a.GetObjectInfo(ctx, bucket, object, opts)
 	}
 
-	uuid, err := getAzureUploadID()
+	//uuid, err := getAzureUploadID()
 	if err != nil {
 		return objInfo, err
 	}
-	etag := data.MD5HexString()
-	if etag == "" {
-		etag = minio.GenETag()
-	}
+	blockIDs := make(map[string]string)
 
 	blob := a.client.GetContainerReference(bucket).GetBlobReference(object)
 	subPartSize, subPartNumber := int64(azureBlockSize), 1
@@ -768,7 +806,10 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 			subPartSize = remainingSize
 		}
 
-		id := azureGetBlockID(1, subPartNumber, uuid, etag)
+		//	id := azureGetBlockID(1, subPartNumber, uuid, etag)
+		id := base64.StdEncoding.EncodeToString([]byte(minio.MustGetUUID()))
+		blockIDs[id] = ""
+		fmt.Println("adding block id: ", id, " part:", 1, " subpart: ", subPartNumber)
 		if err = blob.PutBlockWithLength(id, uint64(subPartSize), io.LimitReader(data, subPartSize), nil); err != nil {
 			return objInfo, azureToObjectError(err, bucket, object)
 		}
@@ -780,17 +821,18 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
-
-	getBlocks := func(partNumber int, etag string) (blocks []storage.Block, size int64, aerr error) {
+	getBlocks := func(partNumber int, blocksMap map[string]string) (blocks []storage.Block, size int64, aerr error) {
+		//getBlocks := func(partNumber int, etag string) (blocks []storage.Block, size int64, aerr error) {
 		for _, part := range resp.UncommittedBlocks {
-			var partID int
-			var readUploadID string
-			var md5Hex string
-			if partID, _, readUploadID, md5Hex, aerr = azureParseBlockID(part.Name); aerr != nil {
-				return nil, 0, aerr
-			}
+			// var partID int
+			// var readUploadID string
+			// var md5Hex string
+			// if partID, _, readUploadID, md5Hex, aerr = azureParseBlockID(part.Name); aerr != nil {
+			// 	return nil, 0, aerr
+			// }
 
-			if partNumber == partID && uuid == readUploadID && etag == md5Hex {
+			//if partNumber == partID && uuid == readUploadID && etag == md5Hex {
+			if _, ok := blocksMap[part.Name]; ok {
 				blocks = append(blocks, storage.Block{
 					ID:     part.Name,
 					Status: storage.BlockStatusUncommitted,
@@ -808,7 +850,8 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 	}
 
 	var blocks []storage.Block
-	blocks, _, err = getBlocks(1, etag)
+	//	blocks, _, err = getBlocks(1, etag)
+	blocks, _, err = getBlocks(1, blockIDs)
 	if err != nil {
 		logger.LogIf(ctx, err)
 		return objInfo, err
@@ -823,7 +866,7 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 	}
 
 	// Save md5sum for future processing on the object.
-	metadata["x-amz-meta-md5sum"] = hex.EncodeToString(data.MD5Current())
+	metadata["x-amz-meta-md5sum"] = r.MD5CurrentHexString()
 	objBlob.Metadata, objBlob.Properties, err = s3MetaToAzureProperties(ctx, metadata)
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
@@ -896,6 +939,15 @@ func getAzureMetadataObjectName(objectName, uploadID string) string {
 	return fmt.Sprintf(metadataObjectNameTemplate, uploadID, sha256.Sum256([]byte(objectName)))
 }
 
+func getAzureMetadataPartName(objectName, uploadID string, partID int) string {
+	partMetaPrefix := fmt.Sprintf(metadataPartNamePrefix, uploadID, sha256.Sum256([]byte(objectName)))
+	return path.Join(partMetaPrefix, fmt.Sprintf("%d.json", partID))
+}
+
+func getAzureMetadataPartPrefix(objectName, uploadID string) string {
+	return fmt.Sprintf(metadataPartNamePrefix, uploadID, sha256.Sum256([]byte(objectName)))
+}
+
 func (a *azureObjects) checkUploadIDExists(ctx context.Context, bucketName, objectName, uploadID string) (err error) {
 	blob := a.client.GetContainerReference(bucketName).GetBlobReference(
 		getAzureMetadataObjectName(objectName, uploadID))
@@ -939,20 +991,25 @@ func (a *azureObjects) NewMultipartUpload(ctx context.Context, bucket, object st
 
 // PutObjectPart - Use Azure equivalent PutBlockWithLength.
 func (a *azureObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
+	fmt.Println("AZUREPOp")
 	data := r.Reader
 	if err = a.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
+		fmt.Println("#1", err)
 		return info, err
 	}
 
 	if err = checkAzureUploadID(ctx, uploadID); err != nil {
+		fmt.Println("#2", err)
+
 		return info, err
 	}
 
-	etag := data.MD5HexString()
-	if etag == "" {
-		etag = minio.GenETag()
-	}
+	// etag := data.MD5HexString()
 
+	// if etag == "" {
+	// 	etag = minio.GenETag()
+	// }
+	partMetaV1 := newPartMetaV1(uploadID, partID)
 	subPartSize, subPartNumber := int64(azureBlockSize), 1
 	for remainingSize := data.Size(); remainingSize >= 0; remainingSize -= subPartSize {
 		// Allow to create zero sized part.
@@ -964,17 +1021,52 @@ func (a *azureObjects) PutObjectPart(ctx context.Context, bucket, object, upload
 			subPartSize = remainingSize
 		}
 
-		id := azureGetBlockID(partID, subPartNumber, uploadID, etag)
+		id := base64.StdEncoding.EncodeToString([]byte(minio.MustGetUUID()))
+		//id := azureGetBlockID(partID, subPartNumber, uploadID, etag)
+		partMetaV1.BlockIDs = append(partMetaV1.BlockIDs, id)
 		blob := a.client.GetContainerReference(bucket).GetBlobReference(object)
 		err = blob.PutBlockWithLength(id, uint64(subPartSize), io.LimitReader(data, subPartSize), nil)
 		if err != nil {
+			fmt.Println("#3", err)
+
 			return info, azureToObjectError(err, bucket, object)
 		}
 		subPartNumber++
+		fmt.Println("appending blob block with id:", id)
+	}
+	//md5Hex := r.MD5CurrentHexString()
+	fmt.Println("about to set md5hex string...issue here?")
+	partMetaV1.MD5Sum = r.MD5CurrentHexString()
+	partMetaV1.Size = data.Size()
+	fmt.Println("about to set md5hex string...after here?")
+
+	// maintain per part md5sum in a temporary part metadata file until upload
+	// is finalized.
+	metadataObject := getAzureMetadataPartName(object, uploadID, partID)
+	//	metadata := make(map[string]string)
+	// metadata["x-amz-meta-etag"] = etag
+	// metadata["x-amz-meta-md5sum"] = md5Hex
+	var jsonData []byte
+	if jsonData, err = json.Marshal(partMetaV1); err != nil {
+		fmt.Println("#4", err)
+
+		//if jsonData, err = json.Marshal(azureMultipartMetadata{Name: object, Metadata: metadata}); err != nil {
+		logger.LogIf(ctx, err)
+		return info, err
+	}
+	fmt.Println("before part meta...", metadataObject)
+
+	blob := a.client.GetContainerReference(bucket).GetBlobReference(metadataObject)
+	err = blob.CreateBlockBlobFromReader(bytes.NewBuffer(jsonData), nil)
+	if err != nil {
+		fmt.Println("#5", err)
+
+		return info, azureToObjectError(err, bucket, metadataObject)
 	}
 
+	fmt.Println("saved part meta to ...", metadataObject, " content: blockidL:", partMetaV1.BlockIDs)
 	info.PartNumber = partID
-	info.ETag = etag
+	info.ETag = partMetaV1.MD5Sum
 	info.LastModified = minio.UTCNow()
 	info.Size = data.Size()
 	return info, nil
@@ -991,48 +1083,77 @@ func (a *azureObjects) ListObjectParts(ctx context.Context, bucket, object, uplo
 	result.UploadID = uploadID
 	result.MaxParts = maxParts
 
-	objBlob := a.client.GetContainerReference(bucket).GetBlobReference(object)
-	resp, err := objBlob.GetBlockList(storage.BlockListTypeUncommitted, nil)
-	azureErr, ok := err.(storage.AzureStorageServiceError)
-	if ok && azureErr.StatusCode == http.StatusNotFound {
-		// If no parts are uploaded yet then we return empty list.
-		return result, nil
-	}
-	if err != nil {
-		return result, azureToObjectError(err, bucket, object)
-	}
-	// Build a sorted list of parts and return the requested entries.
-	partsMap := make(map[int]minio.PartInfo)
-	for _, block := range resp.UncommittedBlocks {
-		var partNumber int
-		var parsedUploadID string
-		var md5Hex string
-		if partNumber, _, parsedUploadID, md5Hex, err = azureParseBlockID(block.Name); err != nil {
-			return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
-		}
-		if parsedUploadID != uploadID {
-			continue
-		}
-		part, ok := partsMap[partNumber]
-		if !ok {
-			partsMap[partNumber] = minio.PartInfo{
-				PartNumber: partNumber,
-				Size:       block.Size,
-				ETag:       md5Hex,
-			}
-			continue
-		}
-		if part.ETag != md5Hex {
-			// If two parts of same partNumber were uploaded with different contents
-			// return error as we won't be able to decide which the latest part is.
-			return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
-		}
-		part.Size += block.Size
-		partsMap[partNumber] = part
-	}
+	// objBlob := a.client.GetContainerReference(bucket).GetBlobReference(object)
+	// // _, err = objBlob.GetBlockList(storage.BlockListTypeUncommitted, nil)
+	// // azureErr, ok := err.(storage.AzureStorageServiceError)
+	// // if ok && azureErr.StatusCode == http.StatusNotFound {
+	// // 	// If no parts are uploaded yet then we return empty list.
+	// // 	return result, nil
+	// // }
+	// // if err != nil {
+	// // 	return result, azureToObjectError(err, bucket, object)
+	// // }
 	var parts []minio.PartInfo
-	for _, part := range partsMap {
-		parts = append(parts, part)
+	var marker, delimiter string
+	maxKeys := 10000
+
+	prefix := getAzureMetadataPartPrefix(object, uploadID)
+	fmt.Println("before list meta parts.....", partNumberMarker, " object prefix:", prefix)
+	partsMap := make(map[int]minio.PartInfo)
+	container := a.client.GetContainerReference(bucket)
+	resp, err := container.ListBlobs(storage.ListBlobsParameters{
+		Prefix:     prefix,
+		Marker:     marker,
+		Delimiter:  delimiter,
+		MaxResults: uint(maxKeys),
+	})
+	fmt.Println(resp, " prefix::", prefix, " marker :", marker)
+	if err != nil {
+		return result, azureToObjectError(err, bucket, prefix)
+	}
+
+	for _, blob := range resp.Blobs {
+		fmt.Println("saw prefix....", blob.Name)
+		if delimiter == "" && !strings.HasPrefix(blob.Name, minio.GatewayMinioSysTmp) {
+			// We filter out minio.GatewayMinioSysTmp entries in the recursive listing.
+			continue
+		}
+		// filter temporary metadata file for blob
+		if strings.HasSuffix(blob.Name, "azure.json") {
+			continue
+		}
+		if !isAzureMarker(marker) && blob.Name <= marker {
+			// If the application used ListObjectsV1 style marker then we
+			// skip all the entries till we reach the marker.
+			fmt.Println("CONTINUE...")
+			continue
+		}
+		fmt.Println("expect to be here....", prefix)
+		partNumber, err := parseAzurePart(blob.Name, prefix)
+		if err != nil {
+			fmt.Println("parse error", err, partNumber)
+			return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+		}
+		fmt.Println("got part #::", partNumber)
+		var metadata partMetadataV1
+		var metadataReader io.Reader
+		blob := a.client.GetContainerReference(bucket).GetBlobReference(blob.Name)
+		if metadataReader, err = blob.Get(nil); err != nil {
+			fmt.Println(":( didnt find metadata object...", blob.Name, err)
+			return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+		}
+		if err = json.NewDecoder(metadataReader).Decode(&metadata); err != nil {
+			logger.LogIf(ctx, err)
+			return result, azureToObjectError(err, bucket, object)
+		}
+		_, ok := partsMap[partNumber]
+		if !ok {
+			parts = append(parts, minio.PartInfo{
+				PartNumber: partNumber,
+				Size:       metadata.Size,
+				ETag:       metadata.MD5Sum,
+			})
+		}
 	}
 	sort.Slice(parts, func(i int, j int) bool {
 		return parts[i].PartNumber < parts[j].PartNumber
@@ -1061,6 +1182,83 @@ func (a *azureObjects) ListObjectParts(ctx context.Context, bucket, object, uplo
 		}
 	}
 	result.PartNumberMarker = partNumberMarker
+
+	/*
+		// Build a sorted list of parts and return the requested entries.
+		partsMap := make(map[int]minio.PartInfo)
+		for _, block := range resp.UncommittedBlocks {
+			var partNumber int
+			//	var parsedUploadID string
+			//var md5Hex string
+			// if partNumber, _, parsedUploadID, md5Hex, err = azureParseBlockID(block.Name); err != nil {
+			// 	return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+			// }
+			// if parsedUploadID != uploadID {
+			// 	continue
+			// }
+			metadataObject := getAzureMetadataPartName(object, uploadID, partNumber)
+			var metadataReader io.Reader
+			blob := a.client.GetContainerReference(bucket).GetBlobReference(metadataObject)
+			if metadataReader, err = blob.Get(nil); err != nil {
+				fmt.Println(":( didnt find metadata object...", metadataObject, err)
+				return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+			}
+			var metadata azureMultipartMetadata
+			if err = json.NewDecoder(metadataReader).Decode(&metadata); err != nil {
+				fmt.Println(":( json metadata parse failed.......", metadataObject, err)
+
+				return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+			}
+
+			part, ok := partsMap[partNumber]
+			if !ok {
+				partsMap[partNumber] = minio.PartInfo{
+					PartNumber: partNumber,
+					Size:       block.Size,
+					ETag:       metadata.Metadata["x-amz-meta-md5sum"],
+				}
+				continue
+			}
+			// if metadata.Metadata["x-amz-meta-etag"] != md5Hex {
+			// 	// If two parts of same partNumber were uploaded with different contents
+			// 	// return error as we won't be able to decide which the latest part is.
+			// 	return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
+			// }
+			part.Size += block.Size
+			partsMap[partNumber] = part
+		}
+		var parts []minio.PartInfo
+		for _, part := range partsMap {
+			parts = append(parts, part)
+		}
+		sort.Slice(parts, func(i int, j int) bool {
+			return parts[i].PartNumber < parts[j].PartNumber
+		})
+		partsCount := 0
+		i := 0
+		if partNumberMarker != 0 {
+			// If the marker was set, skip the entries till the marker.
+			for _, part := range parts {
+				i++
+				if part.PartNumber == partNumberMarker {
+					break
+				}
+			}
+		}
+		for partsCount < maxParts && i < len(parts) {
+			result.Parts = append(result.Parts, parts[i])
+			i++
+			partsCount++
+		}
+
+		if i < len(parts) {
+			result.IsTruncated = true
+			if partsCount != 0 {
+				result.NextPartNumberMarker = result.Parts[partsCount-1].PartNumber
+			}
+		}
+		result.PartNumberMarker = partNumberMarker
+	*/
 	return result, nil
 }
 
@@ -1070,6 +1268,23 @@ func (a *azureObjects) ListObjectParts(ctx context.Context, bucket, object, uplo
 func (a *azureObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) (err error) {
 	if err = a.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
 		return err
+	}
+	var partNumberMarker int
+	maxParts := 1000
+	for {
+		lpi, err := a.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts)
+		if err != nil {
+			break
+		}
+		for _, part := range lpi.Parts {
+			pblob := a.client.GetContainerReference(bucket).GetBlobReference(
+				getAzureMetadataPartName(object, uploadID, part.PartNumber))
+			pblob.Delete(nil)
+		}
+		partNumberMarker = lpi.NextPartNumberMarker
+		if !lpi.IsTruncated {
+			break
+		}
 	}
 
 	blob := a.client.GetContainerReference(bucket).GetBlobReference(
@@ -1113,16 +1328,23 @@ func (a *azureObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
 
-	getBlocks := func(partNumber int, etag string) (blocks []storage.Block, size int64, err error) {
-		for _, part := range resp.UncommittedBlocks {
-			var partID int
-			var readUploadID string
-			var md5Hex string
-			if partID, _, readUploadID, md5Hex, err = azureParseBlockID(part.Name); err != nil {
-				return nil, 0, err
+	getBlocks := func(partNumber int, blockIDs []string) (blocks []storage.Block, size int64, err error) {
+		isBlockFound := func(blockIDs []string, id string) bool {
+			for _, blockID := range blockIDs {
+				if blockID == id {
+					return true
+				}
 			}
-
-			if partNumber == partID && uploadID == readUploadID && etag == md5Hex {
+			return false
+		}
+		for _, part := range resp.UncommittedBlocks {
+			// var partID int
+			// var readUploadID string
+			//var md5Hex string
+			// if partID, _, readUploadID, md5Hex, err = azureParseBlockID(part.Name); err != nil {
+			// 	return nil, 0, err
+			// }
+			if isBlockFound(blockIDs, part.Name) {
 				blocks = append(blocks, storage.Block{
 					ID:     part.Name,
 					Status: storage.BlockStatusUncommitted,
@@ -1141,10 +1363,34 @@ func (a *azureObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 
 	var allBlocks []storage.Block
 	partSizes := make([]int64, len(uploadedParts))
+	var partMetadataReader io.Reader
+	var partMetadata partMetadataV1
+
 	for i, part := range uploadedParts {
 		var blocks []storage.Block
 		var size int64
-		blocks, size, err = getBlocks(part.PartNumber, part.ETag)
+		partMetadataObject := getAzureMetadataPartName(object, uploadID, part.PartNumber)
+		pblob := a.client.GetContainerReference(bucket).GetBlobReference(partMetadataObject)
+		if partMetadataReader, err = pblob.Get(nil); err != nil {
+			return objInfo, azureToObjectError(err, bucket, partMetadataObject)
+		}
+
+		if err = json.NewDecoder(partMetadataReader).Decode(&partMetadata); err != nil {
+			logger.LogIf(ctx, err)
+			return objInfo, azureToObjectError(err, bucket, partMetadataObject)
+		}
+
+		if partMetadata.MD5Sum != part.ETag {
+			return objInfo, minio.InvalidPart{}
+		}
+		// TODO: KP defer this till completed upload.
+		defer func() {
+			derr := pblob.Delete(nil)
+			logger.GetReqInfo(ctx).AppendTags("uploadID", uploadID)
+			logger.LogIf(ctx, derr)
+		}()
+
+		blocks, size, err = getBlocks(part.PartNumber, partMetadata.BlockIDs)
 		if err != nil {
 			logger.LogIf(ctx, err)
 			return objInfo, err
