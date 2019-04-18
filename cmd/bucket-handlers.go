@@ -105,9 +105,7 @@ func (api objectAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *
 	}
 
 	getBucketInfo := objectAPI.GetBucketInfo
-	if api.CacheAPI() != nil {
-		getBucketInfo = api.CacheAPI().GetBucketInfo
-	}
+
 	if _, err := getBucketInfo(ctx, bucket); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -202,9 +200,6 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 	}
 
 	listBuckets := objectAPI.ListBuckets
-	if api.CacheAPI() != nil {
-		listBuckets = api.CacheAPI().ListBuckets
-	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.ListAllMyBucketsAction, "", ""); s3Error != ErrNone {
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
@@ -323,7 +318,6 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	if api.CacheAPI() != nil {
 		deleteObject = api.CacheAPI().DeleteObject
 	}
-
 	var dErrs = make([]error, len(deleteObjects.Objects))
 	for index, object := range deleteObjects.Objects {
 		// If the request is denied access, each item
@@ -733,9 +727,7 @@ func (api objectAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	getBucketInfo := objectAPI.GetBucketInfo
-	if api.CacheAPI() != nil {
-		getBucketInfo = api.CacheAPI().GetBucketInfo
-	}
+
 	if _, err := getBucketInfo(ctx, bucket); err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 		return
@@ -765,9 +757,7 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 	}
 
 	deleteBucket := objectAPI.DeleteBucket
-	if api.CacheAPI() != nil {
-		deleteBucket = api.CacheAPI().DeleteBucket
-	}
+
 	// Attempt to delete bucket.
 	if err := deleteBucket(ctx, bucket); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
