@@ -19,6 +19,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -33,8 +34,10 @@ import (
 	"time"
 
 	"github.com/djherbis/atime"
+	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/disk"
+	"github.com/minio/sio"
 	"github.com/ncw/directio"
 )
 
@@ -45,6 +48,10 @@ const (
 	cacheMetaVersion  = "1.0.0"
 
 	cacheEnvDelimiter = ";"
+
+	// SSECacheEncrypted is the metadata key indicating that the object
+	// is a cache entry encrypted with cache KMS master key in globalCacheKMS.
+	SSECacheEncrypted = "X-Minio-Internal-Encrypted-Cache"
 )
 
 // CacheChecksumInfoV1 - carries checksums of individual blocks on disk.
@@ -223,6 +230,7 @@ func (c *diskCache) purge() {
 					continue
 				}
 				cc := cacheControlOpts(objInfo)
+
 				if atime.Get(fi).Before(expiry) ||
 					cc.isStaleCache(objInfo.ModTime) {
 					if err = removeAll(pathJoin(c.dir, obj.Name())); err != nil {
@@ -263,6 +271,10 @@ func (c *diskCache) Stat(ctx context.Context, bucket, object string) (oi ObjectI
 	}
 	oi.Bucket = bucket
 	oi.Name = object
+
+	if _, _, err = decryptCacheObjectETag(&oi); err != nil {
+		return oi, err
+	}
 	return
 }
 
@@ -308,7 +320,24 @@ func (c *diskCache) saveMetadata(ctx context.Context, bucket, object string, met
 
 // Backend metadata could have changed through server side copy - reset cache metadata if that is the case
 func (c *diskCache) updateMetadataIfChanged(ctx context.Context, bucket, object string, bkObjectInfo, cacheObjInfo ObjectInfo) error {
-	if !reflect.DeepEqual(bkObjectInfo.UserDefined, cacheObjInfo.UserDefined) ||
+
+	bkMeta := make(map[string]string)
+	cacheMeta := make(map[string]string)
+	for k, v := range bkObjectInfo.UserDefined {
+		if hasPrefix(k, ReservedMetadataPrefix) {
+			// Do not need to send any internal metadata
+			continue
+		}
+		bkMeta[http.CanonicalHeaderKey(k)] = v
+	}
+	for k, v := range cacheObjInfo.UserDefined {
+		if hasPrefix(k, ReservedMetadataPrefix) {
+			// Do not need to send any internal metadata
+			continue
+		}
+		cacheMeta[http.CanonicalHeaderKey(k)] = v
+	}
+	if !reflect.DeepEqual(bkMeta, cacheMeta) ||
 		bkObjectInfo.ETag != cacheObjInfo.ETag ||
 		bkObjectInfo.ContentType != cacheObjInfo.ContentType ||
 		bkObjectInfo.Expires != cacheObjInfo.Expires {
@@ -322,11 +351,11 @@ func getCacheSHADir(dir, bucket, object string) string {
 }
 
 // Cache data to disk with bitrot checksum added for each block of 1MB
-func (c *diskCache) bitrotWriteToCache(ctx context.Context, cachePath string, reader io.Reader, size int64) (int64, error) {
+func (c *diskCache) bitrotWriteToCache(ctx context.Context, cachePath string, reader io.Reader, size uint64) (int64, error) {
 	if err := os.MkdirAll(cachePath, 0777); err != nil {
 		return 0, err
 	}
-	bufSize := int64(readSizeV1)
+	bufSize := uint64(readSizeV1)
 	if size > 0 && bufSize > size {
 		bufSize = size
 	}
@@ -381,6 +410,43 @@ func (c *diskCache) bitrotWriteToCache(ctx context.Context, cachePath string, re
 	return bytesWritten, nil
 }
 
+func newCacheEncryptReader(content io.Reader, bucket, object string, metadata map[string]string) (r io.Reader, err error) {
+	objectEncryptionKey, err := newCacheEncryptMetadata(bucket, object, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := sio.EncryptReader(content, sio.Config{Key: objectEncryptionKey[:], MinVersion: sio.Version20})
+	if err != nil {
+		return nil, crypto.ErrInvalidCustomerKey
+	}
+	return reader, nil
+}
+func newCacheEncryptMetadata(bucket, object string, metadata map[string]string) ([]byte, error) {
+	var sealedKey crypto.SealedKey
+	if globalCacheKMS == nil {
+		return nil, errKMSNotConfigured
+	}
+	key, encKey, err := globalCacheKMS.GenerateKey(globalCacheKMSKeyID, crypto.Context{bucket: path.Join(bucket, object)})
+	if err != nil {
+		return nil, err
+	}
+
+	objectKey := crypto.GenerateKey(key, rand.Reader)
+	sealedKey = objectKey.Seal(key, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
+	crypto.S3.CreateMetadata(metadata, globalCacheKMSKeyID, encKey, sealedKey)
+	var emptyKey [32]byte
+
+	if bytes.Equal(objectKey[:], emptyKey[:]) {
+		return objectKey[:], nil
+	}
+	if etag, ok := metadata["etag"]; ok {
+		metadata["etag"] = hex.EncodeToString(objectKey.SealETag([]byte(etag)))
+	}
+	metadata[SSECacheEncrypted] = ""
+	return objectKey[:], nil
+}
+
 // Caches the object to disk
 func (c *diskCache) Put(ctx context.Context, bucket, object string, data io.Reader, size int64, opts ObjectOptions) error {
 	if c.diskUsageHigh() {
@@ -402,14 +468,29 @@ func (c *diskCache) Put(ctx context.Context, bucket, object string, data io.Read
 		bufSize = size
 	}
 
-	n, err := c.bitrotWriteToCache(ctx, cachePath, data, size)
+	var metadata = make(map[string]string)
+	for k, v := range opts.UserDefined {
+		metadata[k] = v
+	}
+	var reader = data
+	var actualSize = uint64(size)
+	var err error
+	if globalCacheKMS != nil {
+		reader, err = newCacheEncryptReader(data, bucket, object, metadata)
+		if err != nil {
+			return err
+		}
+		actualSize, _ = sio.EncryptedSize(uint64(size))
+	}
+	n, err := c.bitrotWriteToCache(ctx, cachePath, reader, actualSize)
 	if IsErr(err, baseErrs...) {
 		c.setOnline(false)
 	}
 	if err != nil {
 		return err
 	}
-	return c.saveMetadata(ctx, bucket, object, opts.UserDefined, n)
+
+	return c.saveMetadata(ctx, bucket, object, metadata, n)
 }
 
 // checks streaming bitrot checksum of cached object before returning data
@@ -469,7 +550,6 @@ func (c *diskCache) bitrotReadFromCache(ctx context.Context, filePath string, of
 		if _, err := io.ReadFull(rc, checksumHash); err != nil {
 			return err
 		}
-
 		h.Reset()
 		n, err := io.ReadFull(rc, *bufp)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -507,12 +587,62 @@ func (c *diskCache) bitrotReadFromCache(ctx context.Context, filePath string, of
 	return nil
 }
 
+// decryptCacheObjectETag tries to decrypt the ETag saved in encrypted format using the cache KMS
+func decryptCacheObjectETag(info *ObjectInfo) (encrypted bool, objectEncryptionKey []byte, err error) {
+	// Directories are never encrypted.
+	if info.IsDir {
+		return false, nil, nil
+	}
+	encrypted = crypto.S3.IsEncrypted(info.UserDefined) && isCacheEncrypted(info.UserDefined)
+
+	switch {
+	default:
+		return false, nil, nil
+	case encrypted:
+		if globalCacheKMS == nil {
+			return true, nil, errKMSNotConfigured
+		}
+		keyID, kmsKey, sealedKey, err := crypto.S3.ParseMetadata(info.UserDefined)
+
+		if err != nil {
+			return true, nil, err
+		}
+		extKey, err := globalCacheKMS.UnsealKey(keyID, kmsKey, crypto.Context{info.Bucket: path.Join(info.Bucket, info.Name)})
+		if err != nil {
+			return true, nil, err
+		}
+		var objectKey crypto.ObjectKey
+		if err = objectKey.Unseal(extKey, sealedKey, crypto.S3.String(), info.Bucket, info.Name); err != nil {
+			return true, nil, err
+		}
+		info.ETag = tryDecryptCacheETag(objectKey[:], info.ETag, false)
+	}
+
+	return
+}
+
+// helper to decrypt Etag given object encryption key and encrypted ETag
+func tryDecryptCacheETag(key []byte, encryptedETag string, ssec bool) string {
+
+	var objectKey crypto.ObjectKey
+	copy(objectKey[:], key)
+	encBytes, err := hex.DecodeString(encryptedETag)
+	if err != nil {
+		return encryptedETag
+	}
+	etagBytes, err := objectKey.UnsealETag(encBytes)
+	if err != nil {
+		return encryptedETag
+	}
+	return string(etagBytes)
+}
+
 // Get returns ObjectInfo and reader for object from disk cache
 func (c *diskCache) Get(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, opts ObjectOptions) (gr *GetObjectReader, err error) {
 	var objInfo ObjectInfo
 	cacheObjPath := getCacheSHADir(c.dir, bucket, object)
 
-	if objInfo, err = c.statCache(ctx, cacheObjPath); err != nil {
+	if objInfo, err = c.Stat(ctx, bucket, object); err != nil {
 		return nil, toObjectErr(err, bucket, object)
 	}
 
@@ -537,7 +667,6 @@ func (c *diskCache) Get(ctx context.Context, bucket, object string, rs *HTTPRang
 	// Cleanup function to cause the go routine above to exit, in
 	// case of incomplete read.
 	pipeCloser := func() { pr.Close() }
-
 	return fn(pr, h, opts.CheckCopyPrecondFn, pipeCloser)
 
 }

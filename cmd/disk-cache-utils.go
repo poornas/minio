@@ -124,7 +124,7 @@ func backendDownError(err error) bool {
 
 // IsCacheable returns if the object should be saved in the cache.
 func (o ObjectInfo) IsCacheable() bool {
-	return !crypto.IsEncrypted(o.UserDefined)
+	return !crypto.IsEncrypted(o.UserDefined) || globalCacheKMS != nil
 }
 
 // reads file cached on disk from offset upto length
@@ -148,6 +148,10 @@ func readCacheFileStream(filePath string, offset, length int64) (io.ReadCloser, 
 		return nil, err
 	}
 
+	if err = os.Chtimes(filePath, time.Now(), st.ModTime()); err != nil {
+		return nil, err
+	}
+
 	// Verify if its not a regular file, since subsequent Seek is undefined.
 	if !st.Mode().IsRegular() {
 		return nil, errIsNotRegular
@@ -164,4 +168,9 @@ func readCacheFileStream(filePath string, offset, length int64) (io.ReadCloser, 
 		io.Reader
 		io.Closer
 	}{Reader: io.LimitReader(fr, length), Closer: fr}, nil
+}
+
+func isCacheEncrypted(meta map[string]string) bool {
+	_, ok := meta[SSECacheEncrypted]
+	return ok
 }

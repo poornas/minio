@@ -548,7 +548,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, pcfn CheckCopyPrecondi
 					return nil, PreConditionFailed{}
 				}
 			}
-
 			// Apply the skipLen and limit on the
 			// decrypted stream
 			decReader = io.LimitReader(ioutil.NewSkipReader(decReader, skipLen), decRangeLength)
