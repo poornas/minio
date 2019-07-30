@@ -404,8 +404,10 @@ func newCache(config CacheConfig) ([]*diskCache, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		// Start the purging go-routine for entries that have expired
-		go cache.purge()
+		// Start the purging go-routine for entries that have expired if no migration in progress
+		if !migrating {
+			go cache.purge()
+		}
 
 		caches = append(caches, cache)
 	}
@@ -452,7 +454,10 @@ func (c *cacheObjects) migrateCacheFromV1toV2(ctx context.Context) {
 			if err := migrateOldCache(ctx, dc); err != nil {
 				errs[idx] = err
 				logger.LogIf(ctx, err)
+				return
 			}
+			// start purge routine after migration completes.
+			go dc.purge()
 		}(ctx, dc, errs, i)
 	}
 	wg.Wait()
