@@ -218,6 +218,8 @@ var (
 	globalCacheExpiry = 90
 	// Max allowed disk cache percentage
 	globalCacheMaxUse = 80
+	// if true do not cache on PUT
+	globalCacheUploadDisabled = true
 	// Disk cache KMS Key
 	globalCacheKMSKeyID string
 	// Initialized KMS configuration for disk cache

@@ -14,6 +14,7 @@ import (
 
 	"github.com/djherbis/atime"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/wildcard"
 )
 
@@ -35,6 +36,7 @@ type CacheObjectLayer interface {
 	GetObjectInfo(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
 	DeleteObject(ctx context.Context, bucket, object string) error
 	DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error)
+	PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
 	// Storage operations.
 	StorageInfo(ctx context.Context) CacheStorageInfo
 }
@@ -58,6 +60,7 @@ type cacheObjects struct {
 	GetObjectInfoFn  func(ctx context.Context, bucket, object string, opts ObjectOptions) (objInfo ObjectInfo, err error)
 	DeleteObjectFn   func(ctx context.Context, bucket, object string) error
 	DeleteObjectsFn  func(ctx context.Context, bucket string, objects []string) ([]error, error)
+	PutObjectFn      func(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
 }
 
 func (c *cacheObjects) delete(ctx context.Context, dcache *diskCache, bucket, object string) (err error) {
@@ -478,6 +481,75 @@ func (c *cacheObjects) migrateCacheFromV1toV2(ctx context.Context) {
 	logger.StartupMessage(colorBlue("Cache migration completed successfully."))
 }
 
+// PutObject - caches the uploaded object for single Put operations
+func (c cacheObjects) PutObject(ctx context.Context, bucket, object string, r *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	putObjectFn := c.PutObjectFn
+	data := r.Reader
+	dcache, err := c.getCacheToLoc(ctx, bucket, object)
+	if err != nil {
+		// disk cache could not be located,execute backend call.
+		return putObjectFn(ctx, bucket, object, r, opts)
+	}
+	size := r.Size()
+	if globalCacheUploadDisabled || c.skipCache() {
+		return putObjectFn(ctx, bucket, object, r, opts)
+	}
+
+	// fetch from backend if there is no space on cache drive
+	if !dcache.diskAvailable(size) {
+		return putObjectFn(ctx, bucket, object, r, opts)
+	}
+	// fetch from backend if cache exclude pattern or cache-control
+	// directive set to exclude
+	if c.isCacheExclude(bucket, object) {
+		dcache.Delete(ctx, bucket, object)
+		return putObjectFn(ctx, bucket, object, r, opts)
+	}
+
+	// Initialize pipe to stream data to backend
+	pipeReader, pipeWriter := io.Pipe()
+	hashReader, err := hash.NewReader(pipeReader, size, data.MD5HexString(), data.SHA256HexString(), data.ActualSize(), globalCLIContext.StrictS3Compat)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	// Initialize pipe to stream data to cache
+	rPipe, wPipe := io.Pipe()
+
+	oinfoCh := make(chan ObjectInfo)
+	errCh := make(chan error)
+	go func() {
+		oinfo, perr := putObjectFn(ctx, bucket, object, NewPutObjReader(hashReader, nil, nil), opts)
+		if perr != nil {
+			pipeWriter.CloseWithError(perr)
+			wPipe.CloseWithError(perr)
+			close(oinfoCh)
+			errCh <- perr
+			return
+		}
+		close(errCh)
+		oinfoCh <- oinfo
+	}()
+
+	go func() {
+		if err = dcache.Put(ctx, bucket, object, rPipe, data.Size(), opts); err != nil {
+			wPipe.CloseWithError(err)
+			return
+		}
+	}()
+
+	mwriter := io.MultiWriter(pipeWriter, wPipe)
+	_, err = io.Copy(mwriter, data)
+	if err != nil {
+		err = <-errCh
+		return objInfo, err
+	}
+	pipeWriter.Close()
+	wPipe.Close()
+	objInfo = <-oinfoCh
+	return objInfo, err
+
+}
+
 // Returns cacheObjects for use by Server.
 func newServerCacheObjects(ctx context.Context, config CacheConfig) (CacheObjectLayer, error) {
 	// list of disk caches for cache "drives" specified in config.json or MINIO_CACHE_DRIVES env var.
@@ -507,6 +579,9 @@ func newServerCacheObjects(ctx context.Context, config CacheConfig) (CacheObject
 				errs[idx] = newObjectLayerFn().DeleteObject(ctx, bucket, object)
 			}
 			return errs, nil
+		},
+		PutObjectFn: func(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+			return newObjectLayerFn().PutObject(ctx, bucket, object, data, opts)
 		},
 	}
 	if migrateSw {

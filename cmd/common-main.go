@@ -362,6 +362,10 @@ func handleCommonEnvVars() {
 			logger.Fatal(uiErrInvalidCacheEncryptionKey(err), "Invalid cache encryption master key")
 		}
 	}
+
+	// Get MINIO_CACHE_UPLOAD environment variable.
+	globalCacheUploadDisabled = strings.EqualFold(os.Getenv("MINIO_CACHE_UPLOAD"), "off")
+
 	// In place update is true by default if the MINIO_UPDATE is not set
 	// or is not set to 'off', if MINIO_UPDATE is set to 'off' then
 	// in-place update is off.
