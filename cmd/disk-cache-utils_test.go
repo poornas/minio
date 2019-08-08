@@ -17,11 +17,63 @@
 package cmd
 
 import (
+	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 )
+
+// creates a temp dir and sets up posix layer.
+// returns posix layer, temp dir path to be used for the purpose of tests.
+func newCacheTestSetup(t *testing.T) (string, error) {
+	start := UTCNow()
+
+	diskPath, err := ioutil.TempDir("/tmp", "minio-")
+	if err != nil {
+		return "", err
+	}
+	//num := 10000000
+	num := 10
+	for i := 0; i < num; i++ {
+		dirName := fmt.Sprintf("dir%d", i)
+		if err := os.MkdirAll(pathJoin(diskPath, dirName), 0777); err != nil {
+			return "", err
+		}
+		if _, err := os.Create(pathJoin(diskPath, dirName, "part.1")); err != nil {
+			return "", err
+		}
+	}
+	elapsed := time.Since(start)
+	t.Logf("created %d entries in %s", num, elapsed)
+
+	return diskPath, nil
+}
+func timeTrack(t *testing.T, start time.Time, name string) {
+
+}
+
+func TestPosixListSpeed(t *testing.T) {
+	dirName, err := newCacheTestSetup(t)
+	if err != nil {
+		t.Log("failed to create cache test setup ::", err)
+	}
+
+	start := UTCNow()
+
+	entries, err := listCacheDir(dirName)
+	elapsed := time.Since(start)
+
+	t.Logf("listed %d entries in %s", len(entries), elapsed)
+	start = UTCNow()
+	sort.Sort(ByAtime(entries))
+	timeElapsed := time.Since(start)
+	t.Logf("sorted %d entries in %s  ", len(entries), timeElapsed)
+
+}
 
 func TestGetCacheControlOpts(t *testing.T) {
 	expiry, _ := time.Parse(http.TimeFormat, "Wed, 21 Oct 2015 07:28:00 GMT")

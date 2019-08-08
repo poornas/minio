@@ -194,14 +194,14 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 		c.delete(ctx, dcache, bucket, object)
 	}
 
-	// Since we got here, we are serving the request from backend,
-	// and also adding the object to the cache.
-	if !dcache.diskUsageLow() {
-		select {
-		case dcache.purgeChan <- struct{}{}:
-		default:
-		}
-	}
+	// // Since we got here, we are serving the request from backend,
+	// // and also adding the object to the cache.
+	// if !dcache.diskUsageLow() {
+	// 	select {
+	// 	case dcache.purgeChan <- struct{}{}:
+	// 	default:
+	// 	}
+	// }
 	if !dcache.diskAvailable(objInfo.Size) {
 		return c.GetObjectNInfoFn(ctx, bucket, object, rs, h, lockType, opts)
 	}

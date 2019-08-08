@@ -19,10 +19,12 @@ package cmd
 import (
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/djherbis/atime"
 	"github.com/minio/minio/cmd/crypto"
 )
 
@@ -167,4 +169,56 @@ func readCacheFileStream(filePath string, offset, length int64) (io.ReadCloser, 
 		io.Reader
 		io.Closer
 	}{Reader: io.LimitReader(fr, length), Closer: fr}, nil
+}
+
+type cacheEntry struct {
+	atime time.Time
+	name  string
+}
+
+// ByAtime implements sort.Interface based on the atime field.
+type ByAtime []cacheEntry
+
+func (a ByAtime) Len() int           { return len(a) }
+func (a ByAtime) Less(i, j int) bool { return a[i].atime.Before(a[j].atime) }
+func (a ByAtime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+
+// return sorted list of cache entries from dirPath.
+func listCacheDir(dirPath string) ([]cacheEntry, error) {
+	if err := checkPathLength(dirPath); err != nil {
+		return nil, err
+	}
+	entries, err := readDir(dirPath)
+	if err != nil {
+		return nil, errDiskNotFound
+	}
+	//	fmt.Println(entries)
+	var cacheEntries []cacheEntry
+	for _, entry := range entries {
+		var fi os.FileInfo
+		name := pathJoin(dirPath, entry, cacheDataFile)
+		fi, err = os.Stat(name)
+		if err != nil {
+			return nil, err
+		}
+		// fmt.Println(name)
+		cacheEntries = append(cacheEntries, cacheEntry{
+			name: entry,
+			// As os.Stat() doesn't carry other than ModTime(), use
+			// ModTime() as CreatedTime.
+			atime: atime.Get(fi),
+		})
+	}
+	// sort.Sort(ByAtime(cacheEntries))
+	// fmt.Println("sorted cache entries :", cacheEntries)
+	return cacheEntries, nil
+}
+
+func listSortedCacheDir(dirPath string) ([]cacheEntry, error) {
+	cacheEntries, err := listCacheDir(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	sort.Sort(ByAtime(cacheEntries))
+	return cacheEntries, nil
 }

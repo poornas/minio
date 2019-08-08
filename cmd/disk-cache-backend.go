@@ -23,12 +23,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +138,24 @@ func newdiskCache(dir string, expiry int, maxDiskUsagePct int) (*diskCache, erro
 			},
 		},
 	}
+	go func(cache *diskCache, doneCh chan struct{}) {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ticker.C:
+				if !cache.diskUsageLow() {
+					select {
+					case cache.purgeChan <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}(&cache, GlobalServiceDoneCh)
 	return &cache, nil
 }
 
@@ -188,59 +206,91 @@ func (c *diskCache) diskAvailable(size int64) bool {
 
 // Purge cache entries that were not accessed.
 func (c *diskCache) purge() {
+	/*	ctx := context.Background()
+		for {
+			olderThan := c.expiry
+			for !c.diskUsageLow() {
+				// delete unaccessed objects older than expiry duration
+				expiry := UTCNow().AddDate(0, 0, -1*olderThan)
+				olderThan /= 2
+				if olderThan < 1 {
+					break
+				}
+				deletedCount := 0
+
+				objDirs, err := ioutil.ReadDir(c.dir)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				for _, obj := range objDirs {
+					if obj.Name() == minioMetaBucket {
+						continue
+					}
+					// stat entry to get atime
+					var fi os.FileInfo
+					fi, err := os.Stat(pathJoin(c.dir, obj.Name(),cacheDataFile))
+					if err != nil {
+						continue
+					}
+
+					objInfo, err := c.statCache(ctx, pathJoin(c.dir, obj.Name()))
+					if err != nil {
+						// delete any partially filled cache entry left behind.
+						removeAll(pathJoin(c.dir, obj.Name()))
+						continue
+					}
+					cc := cacheControlOpts(objInfo)
+					if atime.Get(fi).Before(expiry) ||
+						cc.isStale(objInfo.ModTime) {
+						if err = removeAll(pathJoin(c.dir, obj.Name())); err != nil {
+							logger.LogIf(ctx, err)
+						}
+						deletedCount++
+						// break early if sufficient disk space reclaimed.
+						if !c.diskUsageLow() {
+							break
+						}
+					}
+				}
+				if deletedCount == 0 {
+					// to avoid a busy loop
+					time.Sleep(time.Minute * 30)
+				}
+			}
+			olderThan = c.expiry
+			<-c.purgeChan
+		}
+	*/
 	ctx := context.Background()
 	for {
-		olderThan := c.expiry
 		for !c.diskUsageLow() {
-			// delete unaccessed objects older than expiry duration
-			expiry := UTCNow().AddDate(0, 0, -1*olderThan)
-			olderThan /= 2
-			if olderThan < 1 {
-				break
-			}
 			deletedCount := 0
-
-			objDirs, err := ioutil.ReadDir(c.dir)
+			cacheEntries, err := listCacheDir(c.dir)
 			if err != nil {
 				log.Fatal(err)
 			}
-
-			for _, obj := range objDirs {
-				if obj.Name() == minioMetaBucket {
+			for _, entry := range cacheEntries {
+				dirName := strings.TrimPrefix(entry.name, pathJoin(c.dir, SlashSeparator))
+				dirName = strings.TrimSuffix(dirName, SlashSeparator)
+				if dirName == minioMetaBucket {
 					continue
 				}
-				// stat entry to get atime
-				var fi os.FileInfo
-				fi, err := os.Stat(pathJoin(c.dir, obj.Name(),cacheDataFile))
-				if err != nil {
-					continue
+				// break early if sufficient disk space reclaimed.
+				if c.diskUsageLow() {
+					break
 				}
-
-				objInfo, err := c.statCache(ctx, pathJoin(c.dir, obj.Name()))
-				if err != nil {
-					// delete any partially filled cache entry left behind.
-					removeAll(pathJoin(c.dir, obj.Name()))
-					continue
+				if err = removeAll(entry.name); err != nil {
+					logger.LogIf(ctx, err)
 				}
-				cc := cacheControlOpts(objInfo)
-				if atime.Get(fi).Before(expiry) ||
-					cc.isStale(objInfo.ModTime) {
-					if err = removeAll(pathJoin(c.dir, obj.Name())); err != nil {
-						logger.LogIf(ctx, err)
-					}
-					deletedCount++
-					// break early if sufficient disk space reclaimed.
-					if !c.diskUsageLow() {
-						break
-					}
-				}
+				deletedCount++
 			}
-			if deletedCount == 0 {
+			if c.diskUsageLow() {
 				// to avoid a busy loop
 				time.Sleep(time.Minute * 30)
 			}
+			time.Sleep(time.Minute * 1)
 		}
-		olderThan = c.expiry
 		<-c.purgeChan
 	}
 }
