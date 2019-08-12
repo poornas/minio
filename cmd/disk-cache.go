@@ -229,16 +229,18 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 	}
 	// Initialize pipe.
 	pipeReader, pipeWriter := io.Pipe()
-	teeReader := io.TeeReader(bkReader, pipeWriter)
+	cpipeReader, cpipeWriter := io.Pipe()
+	cacheTeeReader := CacheTeeReader(bkReader, pipeWriter, cpipeWriter)
 	go func() {
-		putErr := dcache.Put(ctx, bucket, object, io.LimitReader(pipeReader, bkReader.ObjInfo.Size), bkReader.ObjInfo.Size, ObjectOptions{UserDefined: getMetadata(bkReader.ObjInfo)})
+		putErr := dcache.Put(ctx, bucket, object, io.LimitReader(cpipeReader, bkReader.ObjInfo.Size), bkReader.ObjInfo.Size, ObjectOptions{UserDefined: getMetadata(bkReader.ObjInfo)})
 		// close the write end of the pipe, so the error gets
 		// propagated to getObjReader
-		pipeWriter.CloseWithError(putErr)
+		cpipeWriter.CloseWithError(putErr)
 	}()
 	cleanupBackend := func() { bkReader.Close() }
-	cleanupPipe := func() { pipeReader.Close() }
-	return NewGetObjectReaderFromReader(teeReader, bkReader.ObjInfo, opts.CheckCopyPrecondFn, cleanupBackend, cleanupPipe)
+	cleanupPipe := func() { pipeReader.Close(); cpipeReader.Close() }
+
+	return NewGetObjectReaderFromReader(cacheTeeReader, bkReader.ObjInfo, opts.CheckCopyPrecondFn, cleanupBackend, cleanupPipe)
 }
 
 // Returns ObjectInfo from cache if available.

@@ -218,3 +218,50 @@ func decryptCacheObjectETag(info *ObjectInfo) error {
 
 	return nil
 }
+
+// CacheTeeReader returns a Reader that writes to w and cw *cache writer) what it reads from r.
+// All reads from r performed through it are matched with
+// corresponding writes to w. There is no internal buffering -
+// the write must complete before the read completes.
+// Any error encountered while writing to w is ignored
+// writes to cw continues as long as there is no read error.
+func CacheTeeReader(r io.Reader, w, cw io.Writer) io.Reader {
+	cr := cacheReader{r, w, cw, nil, 0}
+	return &cr
+}
+
+type cacheReader struct {
+	r        io.Reader
+	w        io.Writer
+	cw       io.Writer
+	writeErr error
+	writeCnt int
+}
+
+func (c *cacheReader) Read(p []byte) (n int, err error) {
+	n, err = c.r.Read(p)
+next:
+	if n > 0 {
+		// write to client if no error thus far
+		if c.writeErr == nil {
+			if _, err := c.w.Write(p[:n]); err != nil {
+				c.writeErr = err
+			}
+		}
+		// write to cache as long as backend read is successful.
+		if _, err2 := c.cw.Write(p[:n]); err2 != nil {
+			return
+		}
+
+		if c.writeErr != nil {
+			n, err = c.r.Read(p)
+			goto next
+		}
+	}
+	// return error on reader back to the w writer.
+	if c.writeErr != nil {
+		err = c.writeErr
+		n = c.writeCnt
+	}
+	return
+}
