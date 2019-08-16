@@ -182,8 +182,9 @@ func (c *diskCache) diskAvailable(size int64) bool {
 		logger.LogIf(ctx, err)
 		return false
 	}
-	usedPercent := (di.Total - (di.Free - uint64(size))) * 100 / di.Total
-	return int(usedPercent) < c.maxDiskUsagePct
+	usable := (di.Total * uint64(c.maxDiskUsagePct)) / 100
+	used := di.Total - (di.Free - uint64(size))
+	return used < usable
 }
 
 // Purge cache entries that were not accessed.
