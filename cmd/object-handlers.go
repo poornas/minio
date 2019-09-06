@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	goioutil "io/ioutil"
 	"net/http"
@@ -239,7 +240,6 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 // you must have READ access to the object.
 func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "GetObject")
-
 	defer logger.AuditLog(w, r, "GetObject", mustGetClaimsFromToken(r))
 
 	objectAPI := api.ObjectAPI()
@@ -258,6 +258,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
+	fmt.Println("GET: ", bucket, object, r.Header)
 
 	if vid := r.URL.Query().Get("versionId"); vid != "" && vid != "null" {
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoSuchVersion), r.URL, guessIsBrowserReq(r))
@@ -429,6 +430,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
+	fmt.Println("HEAD: ", bucket, object, r.Header)
 
 	if vid := r.URL.Query().Get("versionId"); vid != "" && vid != "null" {
 		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchVersion))
@@ -495,6 +497,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	objInfo, err := getObjectInfo(ctx, bucket, object, opts)
+	fmt.Println("#1 getObjectInfo: ", bucket, object, objInfo, err)
 	if err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 		return
@@ -1058,6 +1061,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
+	fmt.Println("PUT: ", bucket, object)
 
 	// To detect if the client has disconnected.
 	r.Body = &detectDisconnect{r.Body, r.Context().Done()}
@@ -1070,6 +1074,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// Validate storage class metadata if present
 	if _, ok := r.Header[amzStorageClassCanonical]; ok {
+		fmt.Println("storage class specified = ", r.Header.Get(amzStorageClassCanonical), amzStorageClassCanonical)
 		if !isValidStorageClassMeta(r.Header.Get(amzStorageClassCanonical)) {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidStorageClass), r.URL, guessIsBrowserReq(r))
 			return

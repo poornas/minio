@@ -19,6 +19,7 @@ package cmd
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -377,11 +378,14 @@ func handleCommonEnvVars() {
 
 		// Check for environment variables and parse into storageClass struct
 		if ssc := os.Getenv(standardStorageClassEnv); ssc != "" {
+			fmt.Println(standardStorageClassEnv, " Global set to ", ssc)
 			globalStandardStorageClass, err = parseStorageClass(ssc)
 			logger.FatalIf(err, "Invalid value set in environment variable %s", standardStorageClassEnv)
 		}
 
 		if rrsc := os.Getenv(reducedRedundancyStorageClassEnv); rrsc != "" {
+			fmt.Println(reducedRedundancyStorageClassEnv, " Global set to ", rrsc)
+
 			globalRRStorageClass, err = parseStorageClass(rrsc)
 			logger.FatalIf(err, "Invalid value set in environment variable %s", reducedRedundancyStorageClassEnv)
 		}
