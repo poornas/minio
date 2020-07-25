@@ -75,6 +75,7 @@ require (
 	github.com/tidwall/gjson v1.3.5
 	github.com/tidwall/sjson v1.0.4
 	github.com/tinylib/msgp v1.1.2
+	github.com/ttacon/chalk v0.0.0-20160626202418-22c06c80ed31 // indirect
 	github.com/valyala/tcplisten v0.0.0-20161114210144-ceec8f93295a
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
@@ -84,6 +85,7 @@ require (
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381
 	golang.org/x/sys v0.0.0-20200625212154-ddb9806d33ae
 	golang.org/x/text v0.3.3 // indirect
+	golang.org/x/tools v0.0.0-20200724172932-b5fc9d354d99 // indirect
 	google.golang.org/api v0.5.0
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0
 	gopkg.in/ldap.v3 v3.0.3

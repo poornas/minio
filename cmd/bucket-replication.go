@@ -60,7 +60,7 @@ func (sys *BucketReplicationSys) GetConfig(ctx context.Context, bucketName strin
 }
 
 // SetTarget - sets a new minio-go client replication target for this bucket.
-func (sys *BucketReplicationSys) SetTarget(ctx context.Context, bucket string, tgt *madmin.BucketReplicationTarget) error {
+func (sys *BucketReplicationSys) SetTarget(ctx context.Context, bucket string, tgt *madmin.BucketTarget) error {
 	if globalIsGateway {
 		return nil
 	}
@@ -184,7 +184,7 @@ var getReplicationTargetInstanceTransport http.RoundTripper
 var getReplicationTargetInstanceTransportOnce sync.Once
 
 // Returns a minio-go Client configured to access remote host described in replication target config.
-var getReplicationTargetClient = func(tcfg *madmin.BucketReplicationTarget) (*miniogo.Core, error) {
+var getReplicationTargetClient = func(tcfg *madmin.BucketTarget) (*miniogo.Core, error) {
 	config := tcfg.Credentials
 	// if Signature version '4' use NewV4 directly.
 	creds := credentials.NewStaticV4(config.AccessKey, config.SecretKey, "")
