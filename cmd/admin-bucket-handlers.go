@@ -32,8 +32,8 @@ import (
 )
 
 const (
-	bucketQuotaConfigFile        = "quota.json"
-	bucketTargetsFile = "bucket-targets.json"
+	bucketQuotaConfigFile = "quota.json"
+	bucketTargetsFile     = "bucket-targets.json"
 )
 
 // PutBucketQuotaConfigHandler - PUT Bucket quota configuration.
@@ -121,7 +121,7 @@ func (a adminAPIHandlers) GetBucketQuotaConfigHandler(w http.ResponseWriter, r *
 	writeSuccessResponseJSON(w, configData)
 }
 
-// SetBucketTargetHandler - sets a replication target for bucket
+// SetBucketTargetHandler - sets a remote target for bucket
 func (a adminAPIHandlers) SetBucketTargetHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "SetBucketTarget")
 
@@ -137,11 +137,6 @@ func (a adminAPIHandlers) SetBucketTargetHandler(w http.ResponseWriter, r *http.
 	}
 	if !globalIsErasure {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
-		return
-	}
-	// Turn off replication if disk crawl is unavailable.
-	if env.Get(envDataUsageCrawlConf, config.EnableOn) == config.EnableOff {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBucketReplicationDisabledError), r.URL)
 		return
 	}
 
@@ -169,6 +164,8 @@ func (a adminAPIHandlers) SetBucketTargetHandler(w http.ResponseWriter, r *http.
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErrWithErr(ErrAdminConfigBadJSON, err), r.URL)
 		return
 	}
+	//TODO: need a global bucket target system
+	// accept a type var and set replication target if type == "s3"
 	target.Arn = globalBucketReplicationSys.getReplicationARN(target.URL())
 	tgtBytes, err := json.Marshal(&target)
 	if err != nil {
@@ -202,7 +199,7 @@ func (a adminAPIHandlers) GetBucketTargetsHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	target, err := globalBucketMetadataSys.GetReplicationTargetConfig(bucket)
+	target, err := globalBucketMetadataSys.GetBucketTargetConfig(bucket)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return

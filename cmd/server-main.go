@@ -169,6 +169,9 @@ func newAllSubsystems() {
 	// Create new bucket versioning subsystem
 	globalBucketVersioningSys = NewBucketVersioningSys()
 
+	// Create new bucket target subsytem
+	globalBucketTargetSys = NewBucketTargetSys()
+
 	// Create new bucket replication subsytem
 	globalBucketReplicationSys = NewBucketReplicationSys()
 }

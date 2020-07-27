@@ -156,7 +156,7 @@ func (sys *BucketReplicationSys) Init(ctx context.Context, buckets []BucketInfo,
 // create minio-go clients for buckets having replication targets
 func (sys *BucketReplicationSys) load(ctx context.Context, buckets []BucketInfo, objAPI ObjectLayer) {
 	for _, bucket := range buckets {
-		tgt, err := globalBucketMetadataSys.GetReplicationTargetConfig(bucket.Name)
+		tgt, err := globalBucketMetadataSys.GetBucketTargetConfig(bucket.Name)
 		if err != nil {
 			continue
 		}

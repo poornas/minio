@@ -376,6 +376,26 @@ func (e BucketReplicationTargetNotVersioned) Error() string {
 	return "Replication target does not have versioning enabled: " + e.Bucket
 }
 
+// BucketTargetConfigNotFound - no bucket target config found
+type BucketTargetConfigNotFound GenericError
+
+func (e BucketTargetConfigNotFound) Error() string {
+	return "The target configuration was not found: " + e.Bucket
+}
+
+// BucketTargetDestinationNotFound bucket does not exist.
+type BucketTargetDestinationNotFound GenericError
+
+func (e BucketTargetDestinationNotFound) Error() string {
+	return "Destination bucket does not exist: " + e.Bucket
+}
+
+type BucketTargetNotFound GenericError
+
+func (e BucketTargetNotFound) Error() string {
+	return "Bucket target not found: " + e.Bucket
+}
+
 /// Bucket related errors.
 
 // BucketNameInvalid - bucketname provided is invalid.
