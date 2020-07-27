@@ -84,7 +84,7 @@ type BucketMetadata struct {
 	taggingConfig      *tags.Tags
 	quotaConfig        *madmin.BucketQuota
 	replicationConfig  *replication.Config
-	bucketTargetConfig *madmin.BucketTarget
+	bucketTargetConfig *madmin.BucketTargets
 }
 
 // newBucketMetadata creates BucketMetadata with the supplied name and Created to Now.
@@ -99,7 +99,7 @@ func newBucketMetadata(name string) BucketMetadata {
 		versioningConfig: &versioning.Versioning{
 			XMLNS: "http://s3.amazonaws.com/doc/2006-03-01/",
 		},
-		bucketTargetConfig: &madmin.BucketTarget{},
+		bucketTargetConfig: &madmin.BucketTargets{},
 	}
 }
 
@@ -231,7 +231,7 @@ func (b *BucketMetadata) parseAllConfigs(ctx context.Context, objectAPI ObjectLa
 			return err
 		}
 	} else {
-		b.bucketTargetConfig = &madmin.BucketTarget{}
+		b.bucketTargetConfig = &madmin.BucketTargets{}
 	}
 	return nil
 }

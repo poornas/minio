@@ -25,47 +25,23 @@ import (
 
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio/pkg/bucket/replication"
 	"github.com/minio/minio/pkg/madmin"
 )
 
-// BucketTargetSys represents replication subsystem
+// BucketTargetSys represents bucket target subsystem
 type BucketTargetSys struct {
 	sync.RWMutex
-	targetsMap    map[string]*miniogo.Core
+	clientsCache  map[string]*miniogo.Core
+	targetsMap    map[string]map[string]*miniogo.Core
 	targetsARNMap map[string]string
 }
 
-// GetConfig - gets replication config associated to a given bucket name.
-func (sys *BucketTargetSys) GetConfig(ctx context.Context, bucketName string) (rc *replication.Config, err error) {
-	if globalIsGateway {
-		objAPI := newObjectLayerWithoutSafeModeFn()
-		if objAPI == nil {
-			return nil, errServerNotInitialized
-		}
-
-		return nil, BucketTargetConfigNotFound{Bucket: bucketName}
-	}
-
-	return globalBucketTargetSys.GetConfig(ctx, bucketName)
-}
-
-// SetTarget - sets a new minio-go client replication target for this bucket.
+// SetTarget - sets a new remote target for bucket.
 func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *madmin.BucketTarget) error {
 	if globalIsGateway {
 		return nil
 	}
-	// delete replication targets that were removed
-	if tgt.Empty() {
-		sys.Lock()
-		if currTgt, ok := sys.targetsMap[bucket]; ok {
-			delete(sys.targetsARNMap, currTgt.EndpointURL().String())
-		}
-		delete(sys.targetsMap, bucket)
-		sys.Unlock()
-		return nil
-	}
-	clnt, err := getBucketTargetClient(tgt)
+	clnt, err := sys.getBucketTargetClient(tgt)
 	if err != nil {
 		return BucketTargetNotFound{Bucket: tgt.TargetBucket}
 	}
@@ -79,6 +55,21 @@ func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *m
 	sys.Lock()
 	sys.targetsMap[bucket] = clnt
 	sys.targetsARNMap[tgt.URL()] = tgt.Arn
+	sys.Unlock()
+	return nil
+}
+
+// RemoveTarget - removes a remote bucket target for this source bucket.
+func (sys *BucketTargetSys) RemoveTarget(ctx context.Context, bucket, arnType string) error {
+	if globalIsGateway {
+		return nil
+	}
+	// delete bucket target of specific arnType that was removed
+	sys.Lock()
+	if currTgt, ok := sys.targetsMap[bucket]; ok {
+		delete(sys.targetsARNMap, fmt.Sprintf("%s%s", arnType, currTgt.EndpointURL().String()))
+	}
+	delete(sys.targetsMap, bucket)
 	sys.Unlock()
 	return nil
 }
@@ -97,8 +88,9 @@ func (sys *BucketTargetSys) GetTargetClient(ctx context.Context, bucket string) 
 // NewBucketTargetSys - creates new replication system.
 func NewBucketTargetSys() *BucketTargetSys {
 	return &BucketTargetSys{
-		targetsMap:    make(map[string]*miniogo.Core),
+		targetsMap:    make(map[string]map[string]*miniogo.Core),
 		targetsARNMap: make(map[string]string),
+		clientsCache:  make(map[string]*miniogo.Core),
 	}
 }
 
@@ -121,27 +113,49 @@ func (sys *BucketTargetSys) Init(ctx context.Context, buckets []BucketInfo, objA
 // create minio-go clients for buckets having replication targets
 func (sys *BucketTargetSys) load(ctx context.Context, buckets []BucketInfo, objAPI ObjectLayer) {
 	for _, bucket := range buckets {
-		tgt, err := globalBucketMetadataSys.GetBucketTargetConfig(bucket.Name)
+		cfg, err := globalBucketMetadataSys.GetBucketTargetConfig(bucket.Name)
 		if err != nil {
 			continue
 		}
-		if tgt == nil || tgt.Empty() {
+		if cfg == nil || cfg.Empty() {
 			continue
 		}
-		tgtClient, err := getBucketTargetClient(tgt)
+		// for now handle only replication target
+		tgt := cfg.Targets[0]
+		tgtClient, err := sys.getBucketTargetClient(&tgt)
 		if err != nil {
 			continue
 		}
 		sys.Lock()
-		sys.targetsMap[bucket.Name] = tgtClient
-		sys.targetsARNMap[tgt.URL()] = tgt.Arn
+		if sys.targetsMap[bucket.Name] == nil {
+			sys.targetsMap[bucket.Name] = make(map[string]*miniogo.Core)
+		}
+		bucketClients := sys.targetsMap[bucket.Name]
+		bucketClients[tgt.URL()] = tgtClient
+		sys.targetsMap[bucket.Name] = bucketClients
+		if _, ok := sys.clientsCache[tgt.URL()]; !ok {
+			sys.clientsCache[tgt.URL()] = tgtClient
+		}
+		sys.targetsARNMap[fmt.Sprintf("%s,%s", tgt.Type, tgt.URL())] = tgt.Arn
 		sys.Unlock()
 	}
 }
 
-// GetARN returns the ARN associated with replication target URL
-func (sys *BucketTargetSys) getARN(endpoint string) string {
-	return sys.targetsARNMap[endpoint]
+// listARN returns the ARN(s) associated with target URL. If arnType is specified,
+// listing is specific to the arn type.
+func (sys *BucketTargetSys) listARN(endpoint, arnType string) []string {
+	var arns []string
+	for k, v := range sys.targetsARNMap {
+		if strings.HasSuffix(k, fmt.Sprintf("%s,%s", arnType, endpoint)) {
+			arns = append(arns, v)
+		}
+	}
+	return arns
+}
+
+// getARN returns the ARN associated with replication target URL
+func (sys *BucketTargetSys) getARN(endpoint, arnType string) string {
+	return sys.targetsARNMap[fmt.Sprintf("%s,%s", arnType, endpoint)]
 }
 
 // getBucketTargetInstanceTransport contains a singleton roundtripper.
@@ -149,7 +163,15 @@ var getBucketTargetInstanceTransport http.RoundTripper
 var getBucketTargetInstanceTransportOnce sync.Once
 
 // Returns a minio-go Client configured to access remote host described in replication target config.
-var getBucketTargetClient = func(tcfg *madmin.BucketTarget) (*miniogo.Core, error) {
+func (sys *BucketTargetSys) getBucketTargetClient(tcfg *madmin.BucketTarget) (*miniogo.Core, error) {
+	if tcfg == nil {
+		return nil, nil
+	}
+	sys.RLock()
+	defer sys.RUnlock()
+	if clnt, ok := sys.clientsCache[tcfg.URL()]; ok {
+		return clnt, nil
+	}
 	config := tcfg.Credentials
 	// if Signature version '4' use NewV4 directly.
 	creds := credentials.NewStaticV4(config.AccessKey, config.SecretKey, "")
@@ -164,16 +186,24 @@ var getBucketTargetClient = func(tcfg *madmin.BucketTarget) (*miniogo.Core, erro
 	core, err := miniogo.NewCore(tcfg.Endpoint, &miniogo.Options{
 		Creds:     creds,
 		Secure:    tcfg.IsSSL,
-		Transport: getReplicationTargetInstanceTransport,
+		Transport: getBucketTargetInstanceTransport,
 	})
 	return core, err
 }
 
 // getARN gets existing ARN for an endpoint or generates a new one.
-func (sys *BucketTargetSys) getTargetARN(endpoint string) string {
-	arn, ok := sys.targetsARNMap[endpoint]
+func (sys *BucketTargetSys) getTargetARN(t madmin.BucketTarget) string {
+	key := fmt.Sprintf("%s%s", t.URL(), string(t.Type))
+	arn, ok := sys.targetsARNMap[key]
 	if ok {
 		return arn
 	}
-	return fmt.Sprintf("arn:minio:s3::%s:*", mustGetUUID())
+	arnStr := ""
+	switch t.Type {
+	case madmin.Replication:
+		arnStr = "s3"
+	default:
+		arnStr = string(t.Type)
+	}
+	return fmt.Sprintf("arn:minio:%s::%s:*", arnStr, mustGetUUID())
 }

@@ -29,6 +29,38 @@ import (
 	"github.com/minio/minio/pkg/auth"
 )
 
+// ArnType represents bucket ARN type
+type ArnType string
+
+const (
+	// Replication specifies a ARN type of replication
+	Replication ArnType = "replication"
+)
+
+// IsValid returns true if ARN type is replication
+func (t ArnType) IsValid() bool {
+	return t == Replication
+}
+
+// BucketTargets represents a slice of bucket targets by type and endpoint
+type BucketTargets struct {
+	Targets []BucketTarget
+}
+
+// Empty returns true if struct is empty.
+func (t BucketTargets) Empty() bool {
+	if len(t.Targets) == 0 {
+		return true
+	}
+	empty := true
+	for _, t := range t.Targets {
+		if !t.Empty() {
+			return false
+		}
+	}
+	return empty
+}
+
 // BucketTarget represents the target bucket and site association.
 type BucketTarget struct {
 	Endpoint     string            `json:"endpoint"`
@@ -38,6 +70,7 @@ type BucketTarget struct {
 	Path         string            `json:"path,omitempty"`
 	API          string            `json:"api,omitempty"`
 	Arn          string            `json:"arn,omitempty"`
+	Type         ArnType           `json:"type"`
 }
 
 // URL returns replication target url
@@ -59,12 +92,13 @@ func (t *BucketTarget) String() string {
 }
 
 // GetBucketTarget - gets target for this bucket
-func (adm *AdminClient) GetBucketTarget(ctx context.Context, bucket string) (target BucketTarget, err error) {
+func (adm *AdminClient) GetBucketTarget(ctx context.Context, bucket, arnType string) (target BucketTarget, err error) {
 	queryValues := url.Values{}
 	queryValues.Set("bucket", bucket)
+	queryValues.Set("type", arnType)
 
 	reqData := requestData{
-		relPath:     adminAPIPrefix + "/get-bucket-replication-target",
+		relPath:     adminAPIPrefix + "/get-bucket-target",
 		queryValues: queryValues,
 	}
 
@@ -88,12 +122,12 @@ func (adm *AdminClient) GetBucketTarget(ctx context.Context, bucket string) (tar
 		return target, err
 	}
 	if target.Empty() {
-		return target, errors.New("No Replication target configured")
+		return target, errors.New("No bucket target configured")
 	}
 	return target, nil
 }
 
-// SetBucketTarget sets up a replication target for this bucket
+// SetBucketTarget sets up a bucket target for this bucket
 func (adm *AdminClient) SetBucketTarget(ctx context.Context, bucket string, target *BucketTarget) error {
 	data, err := json.Marshal(target)
 	if err != nil {
@@ -107,7 +141,34 @@ func (adm *AdminClient) SetBucketTarget(ctx context.Context, bucket string, targ
 	queryValues.Set("bucket", bucket)
 
 	reqData := requestData{
-		relPath:     adminAPIPrefix + "/set-bucket-replication-target",
+		relPath:     adminAPIPrefix + "/set-bucket-target",
+		queryValues: queryValues,
+		content:     encData,
+	}
+
+	// Execute PUT on /minio/admin/v3/set-bucket-replication-target to set a replication target for this bucket.
+	resp, err := adm.executeMethod(ctx, http.MethodPut, reqData)
+
+	defer closeResponse(resp)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return httpRespToErrorResponse(resp)
+	}
+
+	return nil
+}
+
+// RemoveBucketTarget removes a bucket target for this bucket for specific arn Type
+func (adm *AdminClient) RemoveBucketTarget(ctx context.Context, bucket, arnType string) error {
+	queryValues := url.Values{}
+	queryValues.Set("bucket", bucket)
+	queryValues.Set("type", arnType)
+
+	reqData := requestData{
+		relPath:     adminAPIPrefix + "/remove-bucket-target",
 		queryValues: queryValues,
 		content:     encData,
 	}
@@ -128,16 +189,17 @@ func (adm *AdminClient) SetBucketTarget(ctx context.Context, bucket string, targ
 }
 
 // GetBucketTargetARN - gets Arn for this remote target
-func (adm *AdminClient) GetBucketTargetARN(ctx context.Context, rURL string) (arn string, err error) {
+func (adm *AdminClient) GetBucketTargetARN(ctx context.Context, rURL, arnType string) (arn string, err error) {
 	queryValues := url.Values{}
 	queryValues.Set("url", rURL)
+	queryValues.Set("type", arnType)
 
 	reqData := requestData{
 		relPath:     adminAPIPrefix + "/get-bucket-target-arn",
 		queryValues: queryValues,
 	}
 
-	// Execute GET on /minio/admin/v3/list-bucket-replication-arn
+	// Execute GET on /minio/admin/v3/get-bucket-target-arn
 	resp, err := adm.executeMethod(ctx, http.MethodGet, reqData)
 
 	defer closeResponse(resp)
@@ -157,7 +219,7 @@ func (adm *AdminClient) GetBucketTargetARN(ctx context.Context, rURL string) (ar
 		return arn, err
 	}
 	if arn == "" {
-		return arn, fmt.Errorf("Missing Replication ARN")
+		return arn, fmt.Errorf("Missing bucket target ARN")
 	}
 	return arn, nil
 }

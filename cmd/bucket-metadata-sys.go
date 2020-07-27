@@ -342,7 +342,7 @@ func (sys *BucketMetadataSys) GetReplicationConfig(ctx context.Context, bucket s
 
 // GetBucketTargetConfig returns configured bucket target for this bucket
 // The returned object may not be modified.
-func (sys *BucketMetadataSys) GetBucketTargetConfig(bucket string) (*madmin.BucketTarget, error) {
+func (sys *BucketMetadataSys) GetBucketTargetConfig(bucket string) (*madmin.BucketTargets, error) {
 	meta, err := sys.GetConfig(bucket)
 	if err != nil {
 		return nil, err
