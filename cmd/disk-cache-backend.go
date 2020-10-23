@@ -538,13 +538,17 @@ func (c *diskCache) saveMetadata(ctx context.Context, bucket, object string, met
 			}
 			m.Ranges[rs.String(actualSize)] = rsFileName
 		}
-	} else {
-		// this is necessary cleanup of range files if entire object is cached.
-		for _, f := range m.Ranges {
-			removeAll(pathJoin(cachedPath, f))
-		}
-		m.Ranges = nil
 	}
+	if rs == nil && !incHitsOnly {
+		// this is necessary cleanup of range files if entire object is cached.
+		if _, err := os.Stat(pathJoin(cachedPath, cacheDataFile)); err == nil {
+			for _, f := range m.Ranges {
+				removeAll(pathJoin(cachedPath, f))
+			}
+			m.Ranges = nil
+		}
+	}
+
 	m.Stat.Size = actualSize
 	m.Stat.ModTime = UTCNow()
 	if !incHitsOnly {

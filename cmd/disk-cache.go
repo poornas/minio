@@ -305,12 +305,9 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 		return bkReader, bkErr
 	}
 
-	if rs != nil {
+	// if range caching is disabled, download entire object.
+	if rs != nil && !dcache.enableRange {
 		go func() {
-			// if range caching is disabled, download entire object.
-			if !dcache.enableRange {
-				rs = nil
-			}
 			// fill cache in the background for range GET requests
 			bReader, bErr := c.InnerGetObjectNInfoFn(GlobalContext, bucket, object, rs, h, lockType, opts)
 			if bErr != nil {
@@ -337,7 +334,7 @@ func (c *cacheObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 	go func() {
 		putErr := dcache.Put(ctx, bucket, object,
 			io.LimitReader(pipeReader, bkReader.ObjInfo.Size),
-			bkReader.ObjInfo.Size, nil, ObjectOptions{
+			bkReader.ObjInfo.Size, rs, ObjectOptions{
 				UserDefined: userDefined,
 			}, false)
 		// close the write end of the pipe, so the error gets
