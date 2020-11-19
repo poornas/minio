@@ -300,8 +300,10 @@ func (lc Lifecycle) ComputeAction(obj ObjectOpts) Action {
 //   e.g. If the object modtime is `Thu May 21 13:42:50 GMT 2020` and the object should
 //       transition in 1 day, then the expected transition time is `Fri, 23 May 2020 00:00:00 GMT`
 func ExpectedExpiryTime(modTime time.Time, days int) time.Time {
-	t := modTime.UTC().Add(time.Duration(days+1) * 24 * time.Hour)
-	return t.Truncate(24 * time.Hour)
+	// 	t := modTime.UTC().Add(time.Duration(days+1) * 24 * time.Hour)
+	// return t.Truncate(24 * time.Hour)
+	t := modTime.UTC().Add(time.Duration(days) * time.Minute) // treat transition days as mins here
+	return t
 }
 
 // PredictExpiryTime returns the expiry date/time of a given object
