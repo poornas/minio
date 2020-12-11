@@ -1253,7 +1253,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	if rs := r.Header.Get(xhttp.AmzBucketReplicationStatus); rs != "" {
 		srcInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = rs
 	}
-	if ok, _ := mustReplicate(ctx, r, dstBucket, dstObject, srcInfo.UserDefined, srcInfo.ReplicationStatus.String()); ok {
+	if ok, _ := mustReplicate(ctx, r, dstBucket, dstObject, srcInfo.UserDefined, srcInfo.ReplicationStatus.String(), srcInfo.metadataOnly); ok {
 		srcInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
 	}
 	// Store the preserved compression metadata.
@@ -1336,7 +1336,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	objInfo.ETag = getDecryptedETag(r.Header, objInfo, false)
 	response := generateCopyObjectResponse(objInfo.ETag, objInfo.ModTime)
 	encodedSuccessResponse := encodeResponse(response)
-	if replicate, sync := mustReplicate(ctx, r, dstBucket, dstObject, objInfo.UserDefined, objInfo.ReplicationStatus.String()); replicate {
+	if replicate, sync := mustReplicate(ctx, r, dstBucket, dstObject, objInfo.UserDefined, objInfo.ReplicationStatus.String(), objInfo.metadataOnly); replicate {
 		scheduleReplication(ctx, objInfo.Clone(), objectAPI, sync)
 	}
 
@@ -1579,7 +1579,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-	if ok, _ := mustReplicate(ctx, r, bucket, object, metadata, ""); ok {
+	if ok, _ := mustReplicate(ctx, r, bucket, object, metadata, "", false); ok {
 		metadata[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
 	}
 	if r.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.Replica.String() {
@@ -1651,7 +1651,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 			objInfo.ETag = objInfo.ETag + "-1"
 		}
 	}
-	if replicate, sync := mustReplicate(ctx, r, bucket, object, metadata, ""); replicate {
+	if replicate, sync := mustReplicate(ctx, r, bucket, object, metadata, "", false); replicate {
 		scheduleReplication(ctx, objInfo.Clone(), objectAPI, sync)
 	}
 	setPutObjHeaders(w, objInfo, false)
@@ -1768,7 +1768,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-	if ok, _ := mustReplicate(ctx, r, bucket, object, metadata, ""); ok {
+	if ok, _ := mustReplicate(ctx, r, bucket, object, metadata, "", false); ok {
 		metadata[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
 	}
 	// We need to preserve the encryption headers set in EncryptRequest,
@@ -2734,7 +2734,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	}
 
 	setPutObjHeaders(w, objInfo, false)
-	if replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, objInfo.ReplicationStatus.String()); replicate {
+	if replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, objInfo.ReplicationStatus.String(), false); replicate {
 		scheduleReplication(ctx, objInfo.Clone(), objectAPI, sync)
 	}
 
@@ -2997,7 +2997,7 @@ func (api objectAPIHandlers) PutObjectLegalHoldHandler(w http.ResponseWriter, r 
 	if objInfo.UserTags != "" {
 		objInfo.UserDefined[xhttp.AmzObjectTagging] = objInfo.UserTags
 	}
-	replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, "")
+	replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, objInfo.ReplicationStatus.String(), true)
 	if replicate {
 		objInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
 	}
@@ -3171,7 +3171,7 @@ func (api objectAPIHandlers) PutObjectRetentionHandler(w http.ResponseWriter, r 
 	if objInfo.UserTags != "" {
 		objInfo.UserDefined[xhttp.AmzObjectTagging] = objInfo.UserTags
 	}
-	replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, "")
+	replicate, sync := mustReplicate(ctx, r, bucket, object, objInfo.UserDefined, objInfo.ReplicationStatus.String(), true)
 	if replicate {
 		objInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
 	}
@@ -3353,7 +3353,12 @@ func (api objectAPIHandlers) PutObjectTaggingHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	replicate, sync := mustReplicate(ctx, r, bucket, object, map[string]string{xhttp.AmzObjectTagging: tags.String()}, "")
+	objInfo, err := objAPI.GetObjectInfo(ctx, bucket, object, opts)
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+	replicate, sync := mustReplicate(ctx, r, bucket, object, map[string]string{xhttp.AmzObjectTagging: tags.String()}, objInfo.ReplicationStatus.String(), true)
 	if replicate {
 		opts.UserDefined = make(map[string]string)
 		opts.UserDefined[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()
@@ -3362,7 +3367,7 @@ func (api objectAPIHandlers) PutObjectTaggingHandler(w http.ResponseWriter, r *h
 	tagsStr := tags.String()
 
 	// Put object tags
-	objInfo, err := objAPI.PutObjectTags(ctx, bucket, object, tagsStr, opts)
+	objInfo, err = objAPI.PutObjectTags(ctx, bucket, object, tagsStr, opts)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -3430,7 +3435,7 @@ func (api objectAPIHandlers) DeleteObjectTaggingHandler(w http.ResponseWriter, r
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-	replicate, sync := mustReplicate(ctx, r, bucket, object, map[string]string{xhttp.AmzObjectTagging: oi.UserTags}, "")
+	replicate, sync := mustReplicate(ctx, r, bucket, object, map[string]string{xhttp.AmzObjectTagging: oi.UserTags}, oi.ReplicationStatus.String(), true)
 	if replicate {
 		opts.UserDefined = make(map[string]string)
 		opts.UserDefined[xhttp.AmzBucketReplicationStatus] = replication.Pending.String()

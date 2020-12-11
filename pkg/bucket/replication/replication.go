@@ -57,6 +57,7 @@ var (
 	errReplicationUniquePriority      = Errorf("Replication configuration has duplicate priority")
 	errReplicationDestinationMismatch = Errorf("The destination bucket must be same for all rules")
 	errRoleArnMissing                 = Errorf("Missing required parameter `Role` in ReplicationConfiguration")
+	errInvalidSourceSelectionCriteria = Errorf("Invalid ReplicaModification status")
 )
 
 // Config - replication configuration specified in
@@ -76,6 +77,16 @@ func ParseConfig(reader io.Reader) (*Config, error) {
 	config := Config{}
 	if err := xml.NewDecoder(io.LimitReader(reader, maxReplicationConfigSize)).Decode(&config); err != nil {
 		return nil, err
+	}
+	// By default, set replica modification to enabled if unset.
+	for i := range config.Rules {
+		if len(config.Rules[i].SourceSelectionCriteria.ReplicaModifications.Status) == 0 {
+			config.Rules[i].SourceSelectionCriteria = SourceSelectionCriteria{
+				ReplicaModifications: ReplicaModifications{
+					Status: Enabled,
+				},
+			}
+		}
 	}
 	return &config, nil
 }
@@ -123,6 +134,7 @@ type ObjectOpts struct {
 	IsLatest     bool
 	DeleteMarker bool
 	SSEC         bool
+	Replica      bool
 }
 
 // FilterActionableRules returns the rules actions that need to be executed
@@ -159,7 +171,6 @@ func (c Config) GetDestination() Destination {
 
 // Replicate returns true if the object should be replicated.
 func (c Config) Replicate(obj ObjectOpts) bool {
-
 	for _, rule := range c.FilterActionableRules(obj) {
 		// check MinIO extension for versioned deletes
 		if !obj.DeleteMarker && obj.VersionID != "" && rule.DeleteReplication.Status == Disabled {
@@ -176,7 +187,10 @@ func (c Config) Replicate(obj ObjectOpts) bool {
 		if rule.Status == Disabled {
 			continue
 		}
-		return true
+		if !obj.Replica {
+			return true
+		}
+		return obj.Replica && rule.SourceSelectionCriteria.ReplicaModifications.Status == Enabled
 	}
 	return false
 }

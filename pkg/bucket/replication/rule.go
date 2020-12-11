@@ -97,9 +97,10 @@ type Rule struct {
 	Priority                int                     `xml:"Priority" json:"Priority"`
 	DeleteMarkerReplication DeleteMarkerReplication `xml:"DeleteMarkerReplication" json:"DeleteMarkerReplication"`
 	// MinIO extension to replicate versioned deletes
-	DeleteReplication DeleteReplication `xml:"DeleteReplication" json:"DeleteReplication"`
-	Destination       Destination       `xml:"Destination" json:"Destination"`
-	Filter            Filter            `xml:"Filter" json:"Filter"`
+	DeleteReplication       DeleteReplication       `xml:"DeleteReplication" json:"DeleteReplication"`
+	Destination             Destination             `xml:"Destination" json:"Destination"`
+	SourceSelectionCriteria SourceSelectionCriteria `xml:"SourceSelectionCriteria" json:"SourceSelectionCriteria"`
+	Filter                  Filter                  `xml:"Filter" json:"Filter"`
 }
 
 var (
@@ -191,6 +192,10 @@ func (r Rule) Validate(bucket string, sameTarget bool) error {
 	if err := r.DeleteReplication.Validate(); err != nil {
 		return err
 	}
+	if err := r.SourceSelectionCriteria.Validate(); err != nil {
+		return err
+	}
+
 	if r.Priority < 0 {
 		return errPriorityMissing
 	}
