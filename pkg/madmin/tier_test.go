@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+
 	"reflect"
 	"testing"
 )
@@ -77,6 +78,7 @@ func TestS3Tier(t *testing.T) {
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-west-1"
 	storageClass := "S3_IA"
+
 	want := &TierConfig{
 		Version: TierConfigV1,
 		Type:    S3,
@@ -113,6 +115,7 @@ func TestS3Tier(t *testing.T) {
 func TestAzTier(t *testing.T) {
 	scName := "test-az"
 	endpoint := "https://myazure.com"
+
 	accountName, accountKey := "accountName", "accountKey"
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-east-1"
@@ -137,6 +140,7 @@ func TestAzTier(t *testing.T) {
 		AzurePrefix(prefix),
 		AzureRegion(region),
 	}
+
 	got, err := NewTierAzure(scName, accountName, accountKey, bucket, options...)
 	if err != nil {
 		t.Fatalf("Failed to create a custom azure tier %s", err)
@@ -154,6 +158,7 @@ func TestGCSStorageClass(t *testing.T) {
 	encodedCreds := base64.URLEncoding.EncodeToString(credsJSON)
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-west-2"
+
 	want := &TierConfig{
 		Version: TierConfigV1,
 		Type:    GCS,

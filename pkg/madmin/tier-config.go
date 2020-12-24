@@ -23,6 +23,8 @@ import (
 	"log"
 )
 
+//go:generate msgp -file $GOFILE
+
 // TierConfigV1 is the supported tier config version
 const TierConfigV1 = "v1"
 

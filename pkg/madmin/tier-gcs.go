@@ -21,6 +21,8 @@ import (
 	"encoding/base64"
 )
 
+//go:generate msgp -file $GOFILE
+
 // TierGCS represents the remote tier configuration for Google Cloud Storage
 type TierGCS struct {
 	Endpoint     string `json:",omitempty"` // custom endpoint is not supported for GCS

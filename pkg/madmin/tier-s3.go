@@ -17,6 +17,8 @@
 
 package madmin
 
+//go:generate msgp -file $GOFILE
+
 // TierS3 represents the remote tier configuration for AWS S3 compatible backend.
 type TierS3 struct {
 	Endpoint     string `json:",omitempty"`
@@ -34,7 +36,6 @@ type S3Options func(*TierS3) error
 // S3Region helper to supply optional region to NewTierS3
 func S3Region(region string) func(s3 *TierS3) error {
 	return func(s3 *TierS3) error {
-
 		s3.Region = region
 		return nil
 	}
