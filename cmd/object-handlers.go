@@ -2798,6 +2798,35 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if goi.TransitionStatus == lifecycle.TransitionComplete { // clean up transitioned tier
+		// if version id being deleted, delete from transition tier
+		// if dm being set, noop on transition tier
+		// non versioned obj being deleted, delete from transition tier.
+		delTier := false
+		switch {
+		case opts.VersionID != "":
+			delTier = true
+		case !globalBucketVersioningSys.Enabled(bucket):
+			delTier = true
+		}
+		if delTier {
+			// ignores error if transitioned object was already deleted
+			err := deleteTransitionedObject(ctx, newObjectLayerFn(), bucket, object, lifecycle.ObjectOpts{
+				Name:             object,
+				UserTags:         goi.UserTags,
+				VersionID:        goi.VersionID,
+				DeleteMarker:     goi.DeleteMarker,
+				TransitionStatus: goi.TransitionStatus,
+				IsLatest:         goi.IsLatest,
+			}, goi.transitionedObjName, goi.TransitionTier, false, false)
+			if err != nil && !isErrObjectNotFound(err) {
+				trErr := fmt.Errorf("failed to transition object on delete: %s", err)
+				writeErrorResponse(ctx, w, toAPIError(ctx, trErr), r.URL, guessIsBrowserReq(r))
+				return
+			}
+		}
+	}
+
 	// http://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectDELETE.html
 	objInfo, err := deleteObject(ctx, objectAPI, api.CacheAPI(), bucket, object, w, r, opts)
 	if err != nil {
@@ -2831,29 +2860,6 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 			Bucket: bucket,
 		}
 		scheduleReplicationDelete(ctx, dobj, objectAPI, replicateSync)
-	}
-
-	if goi.TransitionStatus == lifecycle.TransitionComplete { // clean up transitioned tier
-		// if version id being deleted, delete from transition tier
-		// if dm being set, noop on transition tier
-		// non versioned obj being deleted, delete from transition tier.
-		delTier := false
-		switch {
-		case opts.VersionID != "":
-			delTier = true
-		case !globalBucketVersioningSys.Enabled(bucket):
-			delTier = true
-		}
-		if delTier {
-			deleteTransitionedObject(ctx, newObjectLayerFn(), bucket, object, lifecycle.ObjectOpts{
-				Name:             object,
-				UserTags:         goi.UserTags,
-				VersionID:        goi.VersionID,
-				DeleteMarker:     goi.DeleteMarker,
-				TransitionStatus: goi.TransitionStatus,
-				IsLatest:         goi.IsLatest,
-			}, goi.transitionedObjName, goi.TransitionTier, false, false)
-		}
 	}
 
 	setPutObjHeaders(w, objInfo, true)
