@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"reflect"
 	"testing"
 )
 
@@ -76,17 +77,20 @@ func TestS3Tier(t *testing.T) {
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-west-1"
 	storageClass := "S3_IA"
-	want := &TierS3{
-		Name:      scName,
-		AccessKey: accessKey,
-		SecretKey: secretKey,
-		Bucket:    bucket,
+	want := &TierConfig{
+		Type: S3,
+		S3: &TierS3{
+			Name:      scName,
+			AccessKey: accessKey,
+			SecretKey: secretKey,
+			Bucket:    bucket,
 
-		// custom values
-		Endpoint:     endpoint,
-		Prefix:       prefix,
-		Region:       region,
-		StorageClass: storageClass,
+			// custom values
+			Endpoint:     endpoint,
+			Prefix:       prefix,
+			Region:       region,
+			StorageClass: storageClass,
+		},
 	}
 	options := []S3Options{
 		S3Endpoint(endpoint),
@@ -99,8 +103,8 @@ func TestS3Tier(t *testing.T) {
 		t.Fatalf("Failed to create a custom s3 tier %s", err)
 	}
 
-	if *got != *want {
-		t.Fatalf("got != want, got = %v want = %v", got, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got != want, got = %v want = %v", *got, *want)
 	}
 }
 
@@ -108,32 +112,36 @@ func TestS3Tier(t *testing.T) {
 func TestAzTier(t *testing.T) {
 	scName := "test-az"
 	endpoint := "https://myazure.com"
-	accessKey, secretKey := "accessKey", "secretKey"
+	accountName, accountKey := "accountName", "accountKey"
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-east-1"
-	want := &TierAzure{
-		Name:      scName,
-		AccessKey: accessKey,
-		SecretKey: secretKey,
-		Bucket:    bucket,
+	want := &TierConfig{
+		Type: Azure,
+		Azure: &TierAzure{
+			Name:        scName,
+			AccountName: accountName,
+			AccountKey:  accountKey,
+			Bucket:      bucket,
 
-		// custom values
-		Endpoint: endpoint,
-		Prefix:   prefix,
-		Region:   region,
+			// custom values
+			Endpoint: endpoint,
+			Prefix:   prefix,
+			Region:   region,
+		},
 	}
+
 	options := []AzureOptions{
 		AzureEndpoint(endpoint),
 		AzurePrefix(prefix),
 		AzureRegion(region),
 	}
-	got, err := NewTierAzure(scName, accessKey, secretKey, bucket, options...)
+	got, err := NewTierAzure(scName, accountName, accountKey, bucket, options...)
 	if err != nil {
 		t.Fatalf("Failed to create a custom azure tier %s", err)
 	}
 
-	if *got != *want {
-		t.Fatalf("got != want, got = %v want = %v", got, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got != want, got = %v want = %v", *got, *want)
 	}
 }
 
@@ -144,15 +152,18 @@ func TestGCSStorageClass(t *testing.T) {
 	encodedCreds := base64.URLEncoding.EncodeToString(credsJSON)
 	bucket, prefix := "testbucket", "testprefix"
 	region := "us-west-2"
-	want := &TierGCS{
-		Name:   scName,
-		Bucket: bucket,
-		Creds:  encodedCreds,
+	want := &TierConfig{
+		Type: GCS,
+		GCS: &TierGCS{
+			Name:   scName,
+			Bucket: bucket,
+			Creds:  encodedCreds,
 
-		// custom values
-		Endpoint: "https://storage.googleapis.com/",
-		Prefix:   prefix,
-		Region:   region,
+			// custom values
+			Endpoint: "https://storage.googleapis.com/",
+			Prefix:   prefix,
+			Region:   region,
+		},
 	}
 	options := []GCSOptions{
 		GCSRegion(region),
@@ -163,7 +174,7 @@ func TestGCSStorageClass(t *testing.T) {
 		t.Fatalf("Failed to create a custom gcs tier %s", err)
 	}
 
-	if *got != *want {
-		t.Fatalf("got != want, got = %v want = %v", got, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got != want, got = %v want = %v", *got, *want)
 	}
 }
