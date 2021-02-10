@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"io"
+
+	"github.com/minio/minio/pkg/madmin"
 )
 
 type warmBackendGetOpts struct {
@@ -18,6 +20,9 @@ type warmBackend interface {
 	// GetTarget() (string, string)
 }
 
+// checkWarmBackend checks if tier config credentials have sufficient privileges
+// to perform all operations definde in the warmBackend interface.
+// FIXME: currently, we check only for Get.
 func checkWarmBackend(ctx context.Context, w warmBackend) error {
 	// TODO: requires additional checks to ensure that warmBackend
 	// configuration has sufficient privileges to Put/Remove objects as well.
@@ -31,4 +36,28 @@ func checkWarmBackend(ctx context.Context, w warmBackend) error {
 		return err
 	}
 	return nil
+}
+
+// newWarmBackend instantiates the tier type specific warmBackend, runs
+// checkWarmBackend on it.
+func newWarmBackend(ctx context.Context, tier madmin.TierConfig) (d warmBackend, err error) {
+	switch tier.Type {
+	case madmin.S3:
+		d, err = newWarmBackendS3(*tier.S3)
+	case madmin.Azure:
+		d, err = newWarmBackendAzure(*tier.Azure)
+	case madmin.GCS:
+		d, err = newWarmBackendGCS(*tier.GCS)
+	default:
+		return nil, errTierTypeUnsupported
+	}
+	if err != nil {
+		return nil, errTierTypeUnsupported
+	}
+
+	err = checkWarmBackend(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
 }
