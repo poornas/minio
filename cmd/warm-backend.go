@@ -32,10 +32,8 @@ func checkWarmBackend(ctx context.Context, w warmBackend) error {
 		return nil
 	case isErrBucketNotFound(err):
 		return errTierBucketNotFound
-	default:
-		return err
 	}
-	return nil
+	return err
 }
 
 // newWarmBackend instantiates the tier type specific warmBackend, runs
