@@ -18,14 +18,13 @@
 package madmin
 
 type TierAzure struct {
-	Name         string
-	Endpoint     string
-	AccountName  string
-	AccountKey   string
-	Bucket       string
-	Prefix       string
-	Region       string
-	StorageClass string
+	Endpoint     string `json:",omitempty"`
+	AccountName  string `json:",omitempty"`
+	AccountKey   string `json:",omitempty"`
+	Bucket       string `json:",omitempty"`
+	Prefix       string `json:",omitempty"`
+	Region       string `json:",omitempty"`
+	StorageClass string `json:",omitempty"`
 }
 
 type AzureOptions func(*TierAzure) error
@@ -60,7 +59,6 @@ func AzureStorageClass(sc string) func(az *TierAzure) error {
 
 func NewTierAzure(name, accountName, accountKey, bucket string, options ...AzureOptions) (*TierConfig, error) {
 	az := &TierAzure{
-		Name:        name,
 		AccountName: accountName,
 		AccountKey:  accountKey,
 		Bucket:      bucket,
@@ -80,6 +78,7 @@ func NewTierAzure(name, accountName, accountKey, bucket string, options ...Azure
 
 	return &TierConfig{
 		Type:  Azure,
+		Name:  name,
 		Azure: az,
 	}, nil
 }
