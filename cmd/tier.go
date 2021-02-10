@@ -106,7 +106,7 @@ func (config *TierConfigMgr) ListTiers() []madmin.TierConfig {
 	return tierCfgs
 }
 
-// Edit edits replaces the credentials of the remote tier specified by tierName with creds.
+// Edit replaces the credentials of the remote tier specified by tierName with creds.
 func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error {
 	config.Lock()
 	defer config.Unlock()

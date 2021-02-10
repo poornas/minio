@@ -28,7 +28,7 @@ import (
 // TierAPI is API path prefix for tier related admin APIs
 const TierAPI = "tier"
 
-// AddTier addds a new remote tier.
+// AddTier adds a new remote tier.
 func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
