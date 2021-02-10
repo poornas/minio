@@ -25,8 +25,10 @@ import (
 	"strings"
 )
 
+// TierAPI is API path prefix for tier related admin APIs
 const TierAPI = "tier"
 
+// AddTier addds a new remote tier.
 func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -56,6 +58,7 @@ func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
 	return nil
 }
 
+// ListTiers returns a list of remote tiers configured.
 func (adm *AdminClient) ListTiers(ctx context.Context) ([]*TierConfig, error) {
 	reqData := requestData{
 		relPath: strings.Join([]string{adminAPIPrefix, TierAPI}, "/"),
@@ -86,19 +89,22 @@ func (adm *AdminClient) ListTiers(ctx context.Context) ([]*TierConfig, error) {
 	return tiers, nil
 }
 
+// TierCreds is used to pass remote tier credentials in a tier-edit operation.
 type TierCreds struct {
 	AccessKey string `json:"access,omitempty"`
 	SecretKey string `json:"secret,omitempty"`
 	CredsJSON []byte `json:"creds,omitempty"`
 }
 
+// EditTier supports updating credentials for the remote tier identified by tierName.
 func (adm *AdminClient) EditTier(ctx context.Context, tierName string, creds TierCreds) error {
 	data, err := json.Marshal(creds)
 	if err != nil {
 		return err
 	}
 
-	encData, err := EncryptData(adm.getSecretKey(), data)
+	var encData []byte
+	encData, err = EncryptData(adm.getSecretKey(), data)
 	reqData := requestData{
 		relPath: strings.Join([]string{adminAPIPrefix, TierAPI, tierName}, "/"),
 		content: encData,
