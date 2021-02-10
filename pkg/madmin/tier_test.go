@@ -25,7 +25,7 @@ import (
 	"testing"
 )
 
-func ExampleTransitionTierS3() {
+func ExampleNewTierS3() {
 	simpleS3SC, err := NewTierS3("simple-s3", "accessKey", "secretKey", "testbucket")
 	if err != nil {
 		log.Fatalln(err, "Failed to create s3 backed tier")
@@ -40,7 +40,7 @@ func ExampleTransitionTierS3() {
 	fmt.Println(fullyCustomS3SC)
 }
 
-func ExampleTransitionTierAzure() {
+func ExampleNewTierAzure() {
 	simpleAzSC, err := NewTierAzure("simple-az", "accessKey", "secretKey", "testbucket")
 	if err != nil {
 		log.Fatalln(err, "Failed to create azure backed tier")
@@ -54,7 +54,7 @@ func ExampleTransitionTierAzure() {
 	fmt.Println(fullyCustomAzSC)
 }
 
-func ExampleTransitionTierGCS() {
+func ExampleNewTierGCS() {
 	credsJSON := []byte("credentials json content goes here")
 	simpleGCSSC, err := NewTierGCS("simple-gcs", credsJSON, "testbucket")
 	if err != nil {
@@ -79,8 +79,8 @@ func TestS3Tier(t *testing.T) {
 	storageClass := "S3_IA"
 	want := &TierConfig{
 		Type: S3,
+		Name: scName,
 		S3: &TierS3{
-			Name:      scName,
 			AccessKey: accessKey,
 			SecretKey: secretKey,
 			Bucket:    bucket,
@@ -117,8 +117,8 @@ func TestAzTier(t *testing.T) {
 	region := "us-east-1"
 	want := &TierConfig{
 		Type: Azure,
+		Name: scName,
 		Azure: &TierAzure{
-			Name:        scName,
 			AccountName: accountName,
 			AccountKey:  accountKey,
 			Bucket:      bucket,
@@ -154,8 +154,8 @@ func TestGCSStorageClass(t *testing.T) {
 	region := "us-west-2"
 	want := &TierConfig{
 		Type: GCS,
+		Name: scName,
 		GCS: &TierGCS{
-			Name:   scName,
 			Bucket: bucket,
 			Creds:  encodedCreds,
 

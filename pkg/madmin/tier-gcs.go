@@ -22,13 +22,12 @@ import (
 )
 
 type TierGCS struct {
-	Name         string
-	Endpoint     string // custom endpoint is not supported for GCS
-	Creds        string // base64 encoding of credentials.json
-	Bucket       string
-	Prefix       string
-	Region       string
-	StorageClass string
+	Endpoint     string `json:",omitempty"` // custom endpoint is not supported for GCS
+	Creds        string `json:",omitempty"` // base64 encoding of credentials.json
+	Bucket       string `json:",omitempty"`
+	Prefix       string `json:",omitempty"`
+	Region       string `json:",omitempty"`
+	StorageClass string `json:",omitempty"`
 }
 
 type GCSOptions func(*TierGCS) error
@@ -61,7 +60,6 @@ func (gcs *TierGCS) GetCredentialJSON() ([]byte, error) {
 func NewTierGCS(name string, credsJSON []byte, bucket string, options ...GCSOptions) (*TierConfig, error) {
 	creds := base64.URLEncoding.EncodeToString(credsJSON)
 	gcs := &TierGCS{
-		Name:   name,
 		Creds:  creds,
 		Bucket: bucket,
 		// Defaults
@@ -81,6 +79,7 @@ func NewTierGCS(name string, credsJSON []byte, bucket string, options ...GCSOpti
 
 	return &TierConfig{
 		Type: GCS,
+		Name: name,
 		GCS:  gcs,
 	}, nil
 }
