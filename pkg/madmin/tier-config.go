@@ -23,15 +23,24 @@ import (
 	"log"
 )
 
+// TierConfigV1 is the supported tier config version
+const TierConfigV1 = "v1"
+
+// TierType enumerates different remote tier backends.
 type TierType int
 
 const (
+	// Unsupported refers to remote tier backend that is not supported in this version
 	Unsupported TierType = iota
+	// S3 refers to AWS S3 compatible backend
 	S3
+	// Azure refers to Azure Blob Storage
 	Azure
+	// GCS refers to Google Cloud Storage
 	GCS
 )
 
+// String returns the name of tt's remote tier backend.
 func (tt TierType) String() string {
 	switch tt {
 	case S3:
@@ -44,11 +53,14 @@ func (tt TierType) String() string {
 	return "unsupported"
 }
 
+// MarshalJSON returns the canonical json representation of tt.
 func (tt TierType) MarshalJSON() ([]byte, error) {
 	typ := tt.String()
 	return json.Marshal(typ)
 }
 
+// UnmarshalJSON parses the provided tier type string, failing unmarshal
+// if data contains invalid tier type.
 func (tt *TierType) UnmarshalJSON(data []byte) error {
 	var s string
 	err := json.Unmarshal(data, &s)
@@ -64,6 +76,8 @@ func (tt *TierType) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// NewTierType creates TierType if scType is a valid tier type string, otherwise
+// returns an error.
 func NewTierType(scType string) (TierType, error) {
 	switch scType {
 	case S3.String():
@@ -74,59 +88,71 @@ func NewTierType(scType string) (TierType, error) {
 		return GCS, nil
 	}
 
-	return Unsupported, errors.New("Unsupported tier type")
+	return Unsupported, ErrTierTypeUnsupported
 }
 
+// TierConfig represents the different remote tier backend configurations
+// supported. The specific backend is identified by the Type field. It has a
+// Version field to allow for backwards-compatible extension in the future.
 type TierConfig struct {
-	Type  TierType   `json:",omitempty"`
-	Name  string     `json:",omitempty"`
-	S3    *TierS3    `json:",omitempty"`
-	Azure *TierAzure `json:",omitempty"`
-	GCS   *TierGCS   `json:",omitempty"`
+	Version string
+	Type    TierType   `json:",omitempty"`
+	Name    string     `json:",omitempty"`
+	S3      *TierS3    `json:",omitempty"`
+	Azure   *TierAzure `json:",omitempty"`
+	GCS     *TierGCS   `json:",omitempty"`
 }
 
-var errTierNameEmpty = errors.New("remote tier name empty")
-var errTierInvalidConfig = errors.New("invalid tier config")
+var (
+	// ErrTierNameEmpty "remote tier name empty"
+	ErrTierNameEmpty = errors.New("remote tier name empty")
+	// ErrTierInvalidConfig "invalid tier config"
+	ErrTierInvalidConfig = errors.New("invalid tier config")
+	// ErrTierInvalidConfigVersion "invalid tier config version"
+	ErrTierInvalidConfigVersion = errors.New("invalid tier config version")
+	// ErrTierTypeUnsupported "unsupported tier type"
+	ErrTierTypeUnsupported = errors.New("unsupported tier type")
+)
 
 // UnmarshalJSON unmarshals json value to ensure that Type field is filled in
 // correspondence with the tier config supplied.
 // See TestUnmarshalTierConfig for an example json.
 func (cfg *TierConfig) UnmarshalJSON(b []byte) error {
-	m := struct {
-		Type  TierType
-		Name  string
-		S3    *TierS3
-		GCS   *TierGCS
-		Azure *TierAzure
-	}{}
+	type tierConfig TierConfig
+	var m tierConfig
 	err := json.Unmarshal(b, &m)
 	if err != nil {
 		return err
 	}
 
+	if m.Version != TierConfigV1 {
+		return ErrTierInvalidConfigVersion
+	}
+
 	switch m.Type {
 	case S3:
 		if m.S3 == nil {
-			return errTierInvalidConfig
+			return ErrTierInvalidConfig
 		}
 	case Azure:
 		if m.Azure == nil {
-			return errTierInvalidConfig
+			return ErrTierInvalidConfig
 		}
 	case GCS:
 		if m.GCS == nil {
-			return errTierInvalidConfig
+			return ErrTierInvalidConfig
 		}
 	}
-	*cfg = TierConfig{
-		Type:  m.Type,
-		Name:  m.Name,
-		S3:    m.S3,
-		GCS:   m.GCS,
-		Azure: m.Azure,
+
+	if m.Name == "" {
+		return ErrTierNameEmpty
 	}
+
+	*cfg = TierConfig(m)
 	return nil
 }
+
+// Endpoint returns the remote tier backend endpoint.
 func (cfg *TierConfig) Endpoint() string {
 	switch cfg.Type {
 	case S3:
@@ -140,6 +166,7 @@ func (cfg *TierConfig) Endpoint() string {
 	return ""
 }
 
+// Bucket returns the remote tier backend bucket.
 func (cfg *TierConfig) Bucket() string {
 	switch cfg.Type {
 	case S3:
@@ -153,6 +180,7 @@ func (cfg *TierConfig) Bucket() string {
 	return ""
 }
 
+// Prefix returns the remote tier backend prefix.
 func (cfg *TierConfig) Prefix() string {
 	switch cfg.Type {
 	case S3:
@@ -166,6 +194,7 @@ func (cfg *TierConfig) Prefix() string {
 	return ""
 }
 
+// Region returns the remote tier backend region.
 func (cfg *TierConfig) Region() string {
 	switch cfg.Type {
 	case S3:

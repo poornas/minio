@@ -17,6 +17,7 @@
 
 package madmin
 
+// TierS3 represents the remote tier configuration for AWS S3 compatible backend.
 type TierS3 struct {
 	Endpoint     string `json:",omitempty"`
 	AccessKey    string `json:",omitempty"`
@@ -27,15 +28,19 @@ type TierS3 struct {
 	StorageClass string `json:",omitempty"`
 }
 
+// S3Options supports NewTierS3 to take variadic options
 type S3Options func(*TierS3) error
 
+// S3Region helper to supply optional region to NewTierS3
 func S3Region(region string) func(s3 *TierS3) error {
 	return func(s3 *TierS3) error {
+
 		s3.Region = region
 		return nil
 	}
 }
 
+// S3Prefix helper to supply optional object prefix to NewTierS3
 func S3Prefix(prefix string) func(s3 *TierS3) error {
 	return func(s3 *TierS3) error {
 		s3.Prefix = prefix
@@ -43,6 +48,7 @@ func S3Prefix(prefix string) func(s3 *TierS3) error {
 	}
 }
 
+// S3Endpoint helper to supply optional endpoint to NewTierS3
 func S3Endpoint(endpoint string) func(s3 *TierS3) error {
 	return func(s3 *TierS3) error {
 		s3.Endpoint = endpoint
@@ -50,6 +56,7 @@ func S3Endpoint(endpoint string) func(s3 *TierS3) error {
 	}
 }
 
+// S3StorageClass helper to supply optional storage class to NewTierS3
 func S3StorageClass(storageClass string) func(s3 *TierS3) error {
 	return func(s3 *TierS3) error {
 		s3.StorageClass = storageClass
@@ -57,7 +64,12 @@ func S3StorageClass(storageClass string) func(s3 *TierS3) error {
 	}
 }
 
+// NewTierS3 returns a TierConfig of S3 type. Returns error if the given
+// parameters are invalid like name is empty etc.
 func NewTierS3(name, accessKey, secretKey, bucket string, options ...S3Options) (*TierConfig, error) {
+	if name == "" {
+		return nil, ErrTierNameEmpty
+	}
 	sc := &TierS3{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
@@ -76,8 +88,9 @@ func NewTierS3(name, accessKey, secretKey, bucket string, options ...S3Options) 
 	}
 
 	return &TierConfig{
-		Type: S3,
-		Name: name,
-		S3:   sc,
+		Version: TierConfigV1,
+		Type:    S3,
+		Name:    name,
+		S3:      sc,
 	}, nil
 }

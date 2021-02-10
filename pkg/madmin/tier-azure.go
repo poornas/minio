@@ -17,6 +17,7 @@
 
 package madmin
 
+// TierAzure represents the remote tier configuration for Azure Blob Storage.
 type TierAzure struct {
 	Endpoint     string `json:",omitempty"`
 	AccountName  string `json:",omitempty"`
@@ -27,8 +28,10 @@ type TierAzure struct {
 	StorageClass string `json:",omitempty"`
 }
 
+// AzureOptions supports NewTierAzure to take variadic options
 type AzureOptions func(*TierAzure) error
 
+// AzurePrefix helper to supply optional object prefix to NewTierAzure
 func AzurePrefix(prefix string) func(az *TierAzure) error {
 	return func(az *TierAzure) error {
 		az.Prefix = prefix
@@ -36,6 +39,7 @@ func AzurePrefix(prefix string) func(az *TierAzure) error {
 	}
 }
 
+// AzureEndpoint helper to supply optional endpoint to NewTierAzure
 func AzureEndpoint(endpoint string) func(az *TierAzure) error {
 	return func(az *TierAzure) error {
 		az.Endpoint = endpoint
@@ -43,6 +47,7 @@ func AzureEndpoint(endpoint string) func(az *TierAzure) error {
 	}
 }
 
+// AzureRegion helper to supply optional region to NewTierAzure
 func AzureRegion(region string) func(az *TierAzure) error {
 	return func(az *TierAzure) error {
 		az.Region = region
@@ -50,6 +55,7 @@ func AzureRegion(region string) func(az *TierAzure) error {
 	}
 }
 
+// AzureStorageClass helper to supply optional storage class to NewTierAzure
 func AzureStorageClass(sc string) func(az *TierAzure) error {
 	return func(az *TierAzure) error {
 		az.StorageClass = sc
@@ -57,7 +63,13 @@ func AzureStorageClass(sc string) func(az *TierAzure) error {
 	}
 }
 
+// NewTierAzure returns a TierConfig of Azure type. Returns error if the given
+// parameters are invalid like name is empty etc.
 func NewTierAzure(name, accountName, accountKey, bucket string, options ...AzureOptions) (*TierConfig, error) {
+	if name == "" {
+		return nil, ErrTierNameEmpty
+	}
+
 	az := &TierAzure{
 		AccountName: accountName,
 		AccountKey:  accountKey,
@@ -77,8 +89,9 @@ func NewTierAzure(name, accountName, accountKey, bucket string, options ...Azure
 	}
 
 	return &TierConfig{
-		Type:  Azure,
-		Name:  name,
-		Azure: az,
+		Version: TierConfigV1,
+		Type:    Azure,
+		Name:    name,
+		Azure:   az,
 	}, nil
 }
