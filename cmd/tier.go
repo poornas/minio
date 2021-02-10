@@ -31,6 +31,7 @@ import (
 	"github.com/minio/minio/pkg/madmin"
 )
 
+// TierConfigPath refers to remote tier config object name
 var TierConfigPath string = path.Join(minioConfigPrefix, "tier-config.json")
 
 var (
@@ -39,42 +40,29 @@ var (
 	errTierTypeUnsupported   = errors.New("Unsupported tier type")
 )
 
+// TierConfigMgr holds the collection of remote tiers configured in this deployment.
 type TierConfigMgr struct {
 	sync.RWMutex
 	drivercache map[string]warmBackend
-	S3          map[string]madmin.TierS3    `json:"s3"`
-	Azure       map[string]madmin.TierAzure `json:"azure"`
-	GCS         map[string]madmin.TierGCS   `json:"gcs"`
+	Tiers       map[string]madmin.TierConfig `json:"tiers"`
 }
 
+// isTierNameInUse returns tier type and true if there exists a remote tier by
+// name tierName, otherwise returns madmin.Unsupported and false.
 func (config *TierConfigMgr) isTierNameInUse(tierName string) (madmin.TierType, bool) {
-	for name := range config.S3 {
-		if tierName == name {
-			return madmin.S3, true
-		}
+	if t, ok := config.Tiers[tierName]; ok {
+		return t.Type, true
 	}
-
-	for name := range config.Azure {
-		if tierName == name {
-			return madmin.Azure, true
-		}
-	}
-
-	for name := range config.GCS {
-		if tierName == name {
-			return madmin.GCS, true
-		}
-	}
-
 	return madmin.Unsupported, false
 }
 
+// Add adds tier to config if it passes all validations.
 func (config *TierConfigMgr) Add(tier madmin.TierConfig) error {
 	config.Lock()
 	defer config.Unlock()
 
 	// check if tier name is in all caps
-	tierName := tier.Name()
+	tierName := tier.Name
 	if tierName != strings.ToUpper(tierName) {
 		return errTierNameNotUppercase
 	}
@@ -84,113 +72,38 @@ func (config *TierConfigMgr) Add(tier madmin.TierConfig) error {
 		return errTierAlreadyExists
 	}
 
-	switch tier.Type {
-	case madmin.S3:
-		d, err := newWarmBackendS3(*tier.S3)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		// Check if warmbackend is in use by other MinIO tenants
-		inUse, err := d.InUse(context.TODO())
-		if err != nil {
-			return err
-		}
-		if inUse {
-			return errWarmBackendInUse
-		}
-
-		config.S3[tierName] = *tier.S3
-		config.drivercache[tierName] = d
-
-	case madmin.Azure:
-		d, err := newWarmBackendAzure(*tier.Azure)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		// Check if warmbackend is in use by other MinIO tenants
-		inUse, err := d.InUse(context.TODO())
-		if err != nil {
-			return err
-		}
-		if inUse {
-			return errWarmBackendInUse
-		}
-
-		config.Azure[tierName] = *tier.Azure
-		config.drivercache[tierName] = d
-
-	case madmin.GCS:
-		d, err := newWarmBackendGCS(*tier.GCS)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		// Check if warmbackend is in use by other MinIO tenants
-		inUse, err := d.InUse(context.TODO())
-		if err != nil {
-			return err
-		}
-		if inUse {
-			return errWarmBackendInUse
-		}
-
-		config.GCS[tierName] = *tier.GCS
-		config.drivercache[tierName] = d
-
-	default:
-		return errTierTypeUnsupported
+	d, err := newWarmBackend(context.TODO(), tier)
+	if err != nil {
+		return err
 	}
+	// Check if warmbackend is in use by other MinIO tenants
+	inUse, err := d.InUse(context.TODO())
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return errWarmBackendInUse
+	}
+
+	config.Tiers[tierName] = tier
+	config.drivercache[tierName] = d
 
 	return nil
 }
 
+// ListTiers lists remote tiers configured in this deployment.
 func (config *TierConfigMgr) ListTiers() []madmin.TierConfig {
 	config.RLock()
 	defer config.RUnlock()
 
-	var configs []madmin.TierConfig
-	for _, t := range config.S3 {
+	var tierCfgs []madmin.TierConfig
+	for _, tier := range config.Tiers {
 		// This makes a local copy of tier config before
 		// passing a reference to it.
-		cfg := t
-		configs = append(configs, madmin.TierConfig{
-			Type: madmin.S3,
-			S3:   &cfg,
-		})
+		tier := tier
+		tierCfgs = append(tierCfgs, tier)
 	}
-
-	for _, t := range config.Azure {
-		// This makes a local copy of tier config before
-		// passing a reference to it.
-		cfg := t
-		configs = append(configs, madmin.TierConfig{
-			Type:  madmin.Azure,
-			Azure: &cfg,
-		})
-	}
-
-	for _, t := range config.GCS {
-		// This makes a local copy of tier config before
-		// passing a reference to it.
-		cfg := t
-		configs = append(configs, madmin.TierConfig{
-			Type: madmin.GCS,
-			GCS:  &cfg,
-		})
-	}
-
-	return configs
+	return tierCfgs
 }
 
 func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error {
@@ -203,60 +116,34 @@ func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error
 		return errTierNotFound
 	}
 
+	newCfg := config.Tiers[tierName]
 	switch tierType {
 	case madmin.S3:
 		if creds.AccessKey == "" || creds.SecretKey == "" {
 			return errTierInsufficientCreds
 		}
-		newCfg := config.S3[tierName]
-		newCfg.AccessKey = creds.AccessKey
-		newCfg.SecretKey = creds.SecretKey
-		d, err := newWarmBackendS3(newCfg)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		config.S3[tierName] = newCfg
-		config.drivercache[tierName] = d
+		newCfg.S3.AccessKey = creds.AccessKey
+		newCfg.S3.SecretKey = creds.SecretKey
 
 	case madmin.Azure:
 		if creds.AccessKey == "" || creds.SecretKey == "" {
 			return errTierInsufficientCreds
 		}
-		newCfg := config.Azure[tierName]
-		newCfg.AccountName = creds.AccessKey
-		newCfg.AccountKey = creds.SecretKey
-		d, err := newWarmBackendAzure(newCfg)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		config.Azure[tierName] = newCfg
-		config.drivercache[tierName] = d
+		newCfg.Azure.AccountName = creds.AccessKey
+		newCfg.Azure.AccountKey = creds.SecretKey
 	case madmin.GCS:
 		if creds.CredsJSON == nil {
 			return errTierInsufficientCreds
 		}
-		newCfg := config.GCS[tierName]
-		newCfg.Creds = base64.URLEncoding.EncodeToString(creds.CredsJSON)
-		d, err := newWarmBackendGCS(newCfg)
-		if err != nil {
-			return err
-		}
-		err = checkWarmBackend(context.TODO(), d)
-		if err != nil {
-			return err
-		}
-		config.GCS[tierName] = newCfg
-		config.drivercache[tierName] = d
+		newCfg.GCS.Creds = base64.URLEncoding.EncodeToString(creds.CredsJSON)
 	}
 
+	d, err := newWarmBackend(context.TODO(), newCfg)
+	if err != nil {
+		return err
+	}
+	config.Tiers[tierName] = newCfg
+	config.drivercache[tierName] = d
 	return nil
 }
 
@@ -278,26 +165,15 @@ func (config *TierConfigMgr) GetDriver(tierName string) (d warmBackend, err erro
 		return d, nil
 	}
 
-	// Intialize driver from tier config matching tierName
-	if s3, ok := config.S3[tierName]; ok {
-		d, err = newWarmBackendS3(s3)
-		if err != nil {
-			return d, err
-		}
-	} else if az, ok := config.Azure[tierName]; ok {
-		d, err = newWarmBackendAzure(az)
-		if err != nil {
-			return d, err
-		}
-	} else if gcs, ok := config.GCS[tierName]; ok {
-		d, err = newWarmBackendGCS(gcs)
-		if err != nil {
-			return d, err
-		}
-	} else { // No matching driver config found
+	// Initialize driver from tier config matching tierName
+	t, ok := config.Tiers[tierName]
+	if !ok {
 		return nil, errTierNotFound
 	}
-
+	d, err = newWarmBackend(context.TODO(), t)
+	if err != nil {
+		return nil, err
+	}
 	config.drivercache[tierName] = d
 	return d, nil
 }
@@ -368,9 +244,7 @@ func loadGlobalTransitionTierConfig() error {
 			globalTierConfigMgr = &TierConfigMgr{
 				RWMutex:     sync.RWMutex{},
 				drivercache: make(map[string]warmBackend),
-				S3:          make(map[string]madmin.TierS3),
-				Azure:       make(map[string]madmin.TierAzure),
-				GCS:         make(map[string]madmin.TierGCS),
+				Tiers:       make(map[string]madmin.TierConfig),
 			}
 			return nil
 		}
@@ -387,14 +261,8 @@ func loadGlobalTransitionTierConfig() error {
 	if config.drivercache == nil {
 		config.drivercache = make(map[string]warmBackend)
 	}
-	if config.S3 == nil {
-		config.S3 = make(map[string]madmin.TierS3)
-	}
-	if config.Azure == nil {
-		config.Azure = make(map[string]madmin.TierAzure)
-	}
-	if config.GCS == nil {
-		config.GCS = make(map[string]madmin.TierGCS)
+	if config.Tiers == nil {
+		config.Tiers = make(map[string]madmin.TierConfig)
 	}
 
 	globalTierConfigMgr = &config

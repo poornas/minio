@@ -78,12 +78,55 @@ func NewTierType(scType string) (TierType, error) {
 }
 
 type TierConfig struct {
-	Type  TierType
-	S3    *TierS3
-	Azure *TierAzure
-	GCS   *TierGCS
+	Type  TierType   `json:",omitempty"`
+	Name  string     `json:",omitempty"`
+	S3    *TierS3    `json:",omitempty"`
+	Azure *TierAzure `json:",omitempty"`
+	GCS   *TierGCS   `json:",omitempty"`
 }
 
+var errTierNameEmpty = errors.New("remote tier name empty")
+var errTierInvalidConfig = errors.New("invalid tier config")
+
+// UnmarshalJSON unmarshals json value to ensure that Type field is filled in
+// correspondence with the tier config supplied.
+// See TestUnmarshalTierConfig for an example json.
+func (cfg *TierConfig) UnmarshalJSON(b []byte) error {
+	m := struct {
+		Type  TierType
+		Name  string
+		S3    *TierS3
+		GCS   *TierGCS
+		Azure *TierAzure
+	}{}
+	err := json.Unmarshal(b, &m)
+	if err != nil {
+		return err
+	}
+
+	switch m.Type {
+	case S3:
+		if m.S3 == nil {
+			return errTierInvalidConfig
+		}
+	case Azure:
+		if m.Azure == nil {
+			return errTierInvalidConfig
+		}
+	case GCS:
+		if m.GCS == nil {
+			return errTierInvalidConfig
+		}
+	}
+	*cfg = TierConfig{
+		Type:  m.Type,
+		Name:  m.Name,
+		S3:    m.S3,
+		GCS:   m.GCS,
+		Azure: m.Azure,
+	}
+	return nil
+}
 func (cfg *TierConfig) Endpoint() string {
 	switch cfg.Type {
 	case S3:
@@ -131,19 +174,6 @@ func (cfg *TierConfig) Region() string {
 		return cfg.Azure.Region
 	case GCS:
 		return cfg.GCS.Region
-	}
-	log.Printf("unexpected tier type %s", cfg.Type)
-	return ""
-}
-
-func (cfg *TierConfig) Name() string {
-	switch cfg.Type {
-	case S3:
-		return cfg.S3.Name
-	case Azure:
-		return cfg.Azure.Name
-	case GCS:
-		return cfg.GCS.Name
 	}
 	log.Printf("unexpected tier type %s", cfg.Type)
 	return ""

@@ -18,14 +18,13 @@
 package madmin
 
 type TierS3 struct {
-	Name         string
-	Endpoint     string
-	AccessKey    string
-	SecretKey    string
-	Bucket       string
-	Prefix       string
-	Region       string
-	StorageClass string
+	Endpoint     string `json:",omitempty"`
+	AccessKey    string `json:",omitempty"`
+	SecretKey    string `json:",omitempty"`
+	Bucket       string `json:",omitempty"`
+	Prefix       string `json:",omitempty"`
+	Region       string `json:",omitempty"`
+	StorageClass string `json:",omitempty"`
 }
 
 type S3Options func(*TierS3) error
@@ -60,7 +59,6 @@ func S3StorageClass(storageClass string) func(s3 *TierS3) error {
 
 func NewTierS3(name, accessKey, secretKey, bucket string, options ...S3Options) (*TierConfig, error) {
 	sc := &TierS3{
-		Name:      name,
 		AccessKey: accessKey,
 		SecretKey: secretKey,
 		Bucket:    bucket,
@@ -79,6 +77,7 @@ func NewTierS3(name, accessKey, secretKey, bucket string, options ...S3Options) 
 
 	return &TierConfig{
 		Type: S3,
+		Name: name,
 		S3:   sc,
 	}, nil
 }
