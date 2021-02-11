@@ -36,13 +36,10 @@ type ServiceType string
 const (
 	// ReplicationService specifies replication service
 	ReplicationService ServiceType = "replication"
-	// ILMService specifies ilm service
-//	ILMService ServiceType = "ilm"
 )
 
-// IsValid returns true if ARN type represents replication or ilm
+// IsValid returns true if ARN type represents replication
 func (t ServiceType) IsValid() bool {
-	//	return t == ReplicationService || t == ILMService
 	return t == ReplicationService
 }
 

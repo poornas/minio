@@ -986,8 +986,6 @@ func applyExpiryOnTransitionedObject(ctx context.Context, objLayer ObjectLayer, 
 		RestoreExpires:   obj.RestoreExpires,
 		TransitionStatus: obj.TransitionStatus,
 	}
-	globalTransitionState.queueTransitionTask(obj)
-	return true
 
 	if err := deleteTransitionedObject(ctx, objLayer, obj.Bucket, obj.Name, lcOpts, obj.transitionedObjName, obj.TransitionTier, restoredObject, false); err != nil {
 		if isErrObjectNotFound(err) || isErrVersionNotFound(err) {

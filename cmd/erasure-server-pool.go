@@ -1675,27 +1675,13 @@ func (z *erasureServerPools) TransitionObject(ctx context.Context, bucket, objec
 	if z.SinglePool() {
 		return z.serverPools[0].TransitionObject(ctx, bucket, object, opts)
 	}
+	// We don't know the size here set 1GiB atleast.
+	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
+	if err != nil {
+		return err
+	}
 
-	for _, pool := range z.serverPools {
-		if err := pool.TransitionObject(ctx, bucket, object, opts); err != nil {
-			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-				continue
-			}
-			return err
-		}
-		return nil
-	}
-	if opts.VersionID != "" {
-		return VersionNotFound{
-			Bucket:    bucket,
-			Object:    object,
-			VersionID: opts.VersionID,
-		}
-	}
-	return ObjectNotFound{
-		Bucket: bucket,
-		Object: object,
-	}
+	return z.serverPools[idx].TransitionObject(ctx, bucket, object, opts)
 }
 
 // RestoreTransitionedObject - restore transitioned object content locally on this cluster.
@@ -1704,25 +1690,11 @@ func (z *erasureServerPools) RestoreTransitionedObject(ctx context.Context, buck
 	if z.SinglePool() {
 		return z.serverPools[0].RestoreTransitionedObject(ctx, bucket, object, opts)
 	}
+	// We don't know the size here set 1GiB atleast.
+	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
+	if err != nil {
+		return err
+	}
 
-	for _, pool := range z.serverPools {
-		if err := pool.RestoreTransitionedObject(ctx, bucket, object, opts); err != nil {
-			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-				continue
-			}
-			return err
-		}
-		return nil
-	}
-	if opts.VersionID != "" {
-		return VersionNotFound{
-			Bucket:    bucket,
-			Object:    object,
-			VersionID: opts.VersionID,
-		}
-	}
-	return ObjectNotFound{
-		Bucket: bucket,
-		Object: object,
-	}
+	return z.serverPools[idx].RestoreTransitionedObject(ctx, bucket, object, opts)
 }

@@ -43,7 +43,7 @@ var (
 // TierConfigMgr holds the collection of remote tiers configured in this deployment.
 type TierConfigMgr struct {
 	sync.RWMutex
-	drivercache map[string]warmBackend
+	drivercache map[string]WarmBackend
 	Tiers       map[string]madmin.TierConfig `json:"tiers"`
 }
 
@@ -156,7 +156,7 @@ func (config *TierConfigMgr) Bytes() ([]byte, error) {
 }
 
 // GetDriver returns a warmbackend interface object initialized with remote tier config matching tierName
-func (config *TierConfigMgr) GetDriver(tierName string) (d warmBackend, err error) {
+func (config *TierConfigMgr) GetDriver(tierName string) (d WarmBackend, err error) {
 	config.Lock()
 	defer config.Unlock()
 
@@ -248,7 +248,7 @@ func loadGlobalTransitionTierConfig() error {
 		if isErrObjectNotFound(err) {
 			globalTierConfigMgr = &TierConfigMgr{
 				RWMutex:     sync.RWMutex{},
-				drivercache: make(map[string]warmBackend),
+				drivercache: make(map[string]WarmBackend),
 				Tiers:       make(map[string]madmin.TierConfig),
 			}
 			return nil
@@ -264,7 +264,7 @@ func loadGlobalTransitionTierConfig() error {
 		return err
 	}
 	if config.drivercache == nil {
-		config.drivercache = make(map[string]warmBackend)
+		config.drivercache = make(map[string]WarmBackend)
 	}
 	if config.Tiers == nil {
 		config.Tiers = make(map[string]madmin.TierConfig)
