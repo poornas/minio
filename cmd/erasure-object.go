@@ -1382,7 +1382,7 @@ func (er erasureObjects) RestoreTransitionedObject(ctx context.Context, bucket, 
 	if err != nil {
 		return err
 	}
-	pReader := NewPutObjReader(hashReader, nil, nil)
+	pReader := NewPutObjReader(hashReader)
 	ropts := putRestoreOpts(bucket, object, opts.Transition.RestoreRequest, oi)
 	ropts.UserDefined[xhttp.AmzRestore] = fmt.Sprintf("ongoing-request=%t, expiry-date=%s", false, opts.Transition.RestoreExpiry.Format(http.TimeFormat))
 	ropts.NoLock = true
