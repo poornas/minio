@@ -526,7 +526,10 @@ func serverMain(ctx *cli.Context) {
 
 	if globalIsErasure { // to be done after config init
 		initBackgroundReplication(GlobalContext, newObject)
-		loadGlobalTransitionTierConfig()
+		globalTierConfigMgr, err = loadTransitionTierConfig()
+		if err != nil {
+			logger.FatalIf(err, "Unable to load remote tier config")
+		}
 	}
 
 	if globalCacheConfig.Enabled {

@@ -22,11 +22,11 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
-	"strings"
+	"path"
 )
 
-// TierAPI is API path prefix for tier related admin APIs
-const TierAPI = "tier"
+// tierAPI is API path prefix for tier related admin APIs
+const tierAPI = "tier"
 
 // AddTier adds a new remote tier.
 func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
@@ -41,7 +41,7 @@ func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
 	}
 
 	reqData := requestData{
-		relPath: strings.Join([]string{adminAPIPrefix, TierAPI}, "/"),
+		relPath: path.Join(adminAPIPrefix, tierAPI),
 		content: encData,
 	}
 
@@ -61,7 +61,7 @@ func (adm *AdminClient) AddTier(ctx context.Context, cfg *TierConfig) error {
 // ListTiers returns a list of remote tiers configured.
 func (adm *AdminClient) ListTiers(ctx context.Context) ([]*TierConfig, error) {
 	reqData := requestData{
-		relPath: strings.Join([]string{adminAPIPrefix, TierAPI}, "/"),
+		relPath: path.Join(adminAPIPrefix, tierAPI),
 	}
 
 	// Execute GET on /minio/admin/v3/tier to list remote tiers configured.
@@ -110,7 +110,7 @@ func (adm *AdminClient) EditTier(ctx context.Context, tierName string, creds Tie
 	}
 
 	reqData := requestData{
-		relPath: strings.Join([]string{adminAPIPrefix, TierAPI, tierName}, "/"),
+		relPath: path.Join(adminAPIPrefix, tierAPI, tierName),
 		content: encData,
 	}
 

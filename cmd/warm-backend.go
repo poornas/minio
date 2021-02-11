@@ -48,6 +48,8 @@ func checkWarmBackend(ctx context.Context, w WarmBackend) error {
 		return nil
 	case isErrBucketNotFound(err):
 		return errTierBucketNotFound
+	case isErrSignatureDoesNotMatch(err):
+		return errTierInvalidCredentials
 	}
 	return err
 }

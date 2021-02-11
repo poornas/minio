@@ -245,8 +245,8 @@ func (z *FileInfo) DecodeMsg(dc *msgp.Reader) (err error) {
 		err = msgp.WrapError(err)
 		return
 	}
-	if zb0001 != 20 {
-		err = msgp.ArrayError{Wanted: 20, Got: zb0001}
+	if zb0001 != 22 {
+		err = msgp.ArrayError{Wanted: 22, Got: zb0001}
 		return
 	}
 	z.Volume, err = dc.ReadString()
@@ -405,8 +405,8 @@ func (z *FileInfo) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *FileInfo) EncodeMsg(en *msgp.Writer) (err error) {
-	// array header, size 20
-	err = en.Append(0xdc, 0x0, 0x14)
+	// array header, size 22
+	err = en.Append(0xdc, 0x0, 0x16)
 	if err != nil {
 		return
 	}
@@ -545,8 +545,8 @@ func (z *FileInfo) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *FileInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 20
-	o = append(o, 0xdc, 0x0, 0x14)
+	// array header, size 22
+	o = append(o, 0xdc, 0x0, 0x16)
 	o = msgp.AppendString(o, z.Volume)
 	o = msgp.AppendString(o, z.Name)
 	o = msgp.AppendString(o, z.VersionID)
@@ -595,8 +595,8 @@ func (z *FileInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err)
 		return
 	}
-	if zb0001 != 20 {
-		err = msgp.ArrayError{Wanted: 20, Got: zb0001}
+	if zb0001 != 22 {
+		err = msgp.ArrayError{Wanted: 22, Got: zb0001}
 		return
 	}
 	z.Volume, bts, err = msgp.ReadStringBytes(bts)

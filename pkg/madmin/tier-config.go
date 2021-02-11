@@ -116,6 +116,34 @@ var (
 	ErrTierTypeUnsupported = errors.New("unsupported tier type")
 )
 
+// Clone returns a copy of TierConfig with secret key/credentials redacted.
+func (cfg *TierConfig) Clone() TierConfig {
+	var (
+		s3  TierS3
+		az  TierAzure
+		gcs TierGCS
+	)
+	switch cfg.Type {
+	case S3:
+		s3 = *cfg.S3
+		s3.SecretKey = "REDACTED"
+	case Azure:
+		az = *cfg.Azure
+		az.AccountKey = "REDACTED"
+	case GCS:
+		gcs = *cfg.GCS
+		gcs.Creds = "REDACTED"
+	}
+	return TierConfig{
+		Version: cfg.Version,
+		Type:    cfg.Type,
+		Name:    cfg.Name,
+		S3:      &s3,
+		Azure:   &az,
+		GCS:     &gcs,
+	}
+}
+
 // UnmarshalJSON unmarshals json value to ensure that Type field is filled in
 // correspondence with the tier config supplied.
 // See TestUnmarshalTierConfig for an example json.

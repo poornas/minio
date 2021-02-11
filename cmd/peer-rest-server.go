@@ -965,7 +965,12 @@ func (s *peerRESTServer) LoadTransitionTierConfigHandler(w http.ResponseWriter, 
 		s.writeErrorResponse(w, errors.New("invalid request"))
 		return
 	}
-	go loadGlobalTransitionTierConfig()
+	go func() {
+		err := globalTierConfigMgr.Reload()
+		if err != nil {
+			logger.LogIf(context.Background(), fmt.Errorf("Failed to reload remote tier config %s", err))
+		}
+	}()
 }
 
 // ConsoleLogHandler sends console logs of this node back to peer rest client
