@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2018-2019 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2021 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -197,7 +197,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 		return nil, nil, err
 	}
 	if GlobalKMS == nil {
-		return NewPutObjReader(hr, nil, nil), &ObjectOptions{}, nil
+		return NewPutObjReader(hr), &ObjectOptions{}, nil
 	}
 
 	// Note: Local variables with names ek, oek, etc are named inline with
@@ -208,7 +208,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 	metadata := make(map[string]string)
 	sseS3 := true
 	var extKey [32]byte
-	encBr, oek, err := newEncryptReader(br, extKey[:], minioMetaBucket, TierConfigPath, metadata, sseS3)
+	encBr, oek, err := newEncryptReader(hr, extKey[:], minioMetaBucket, TierConfigPath, metadata, sseS3)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -217,8 +217,11 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 		Size: payloadSize,
 	}
 	encSize := info.EncryptedSize()
-
 	encHr, err := hash.NewReader(encBr, encSize, "", "", encSize, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	pReader, err := NewPutObjReader(hr).WithEncryption(encHr, &oek)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -226,7 +229,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 		UserDefined: metadata,
 		MTime:       UTCNow(),
 	}
-	return NewPutObjReader(hr, encHr, &oek), opts, nil
+	return pReader, opts, nil
 }
 
 func saveGlobalTierConfig() error {
