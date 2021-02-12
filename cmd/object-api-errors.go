@@ -673,6 +673,12 @@ func isErrVersionNotFound(err error) bool {
 	return errors.As(err, &versionNotFound)
 }
 
+// isErrVersionNotFound - Check if error type is SignatureDoesNotMatch.
+func isErrSignatureDoesNotMatch(err error) bool {
+	var signatureDoesNotMatch SignatureDoesNotMatch
+	return errors.As(err, &signatureDoesNotMatch)
+}
+
 // PreConditionFailed - Check if copy precondition failed
 type PreConditionFailed struct{}
 

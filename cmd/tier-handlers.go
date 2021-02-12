@@ -53,12 +53,23 @@ var (
 		Message:    "Remote tier bucket not found",
 		StatusCode: http.StatusBadRequest,
 	}
+	// error returned when remote tier credentials are invalid.
+	errTierInvalidCredentials = AdminError{
+		Code:       "XMinioAdminTierInvalidCredentials",
+		Message:    "Invalid remote tier credentials",
+		StatusCode: http.StatusBadRequest,
+	}
 )
 
 func (api adminAPIHandlers) AddTierHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "AddTier")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	if !globalIsErasure {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+		return
+	}
 
 	objectAPI, cred := validateAdminUsersReq(ctx, w, r, iampolicy.SetTierAction)
 	if objectAPI == nil || globalNotificationSys == nil || globalTierConfigMgr == nil {
@@ -80,7 +91,7 @@ func (api adminAPIHandlers) AddTierHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Refresh from the disk in case we had missed notifications about edits from peers.
-	if err := loadGlobalTransitionTierConfig(); err != nil {
+	if err := globalTierConfigMgr.Reload(); err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
@@ -106,6 +117,11 @@ func (api adminAPIHandlers) ListTierHandler(w http.ResponseWriter, r *http.Reque
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 
+	if !globalIsErasure {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+		return
+	}
+
 	objectAPI, _ := validateAdminUsersReq(ctx, w, r, iampolicy.ListTierAction)
 	if objectAPI == nil || globalNotificationSys == nil || globalTierConfigMgr == nil {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
@@ -126,6 +142,11 @@ func (api adminAPIHandlers) EditTierHandler(w http.ResponseWriter, r *http.Reque
 	ctx := newContext(r, w, "EditTier")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	if !globalIsErasure {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+		return
+	}
 
 	objectAPI, cred := validateAdminUsersReq(ctx, w, r, iampolicy.SetTierAction)
 	if objectAPI == nil || globalNotificationSys == nil || globalTierConfigMgr == nil {
@@ -149,7 +170,7 @@ func (api adminAPIHandlers) EditTierHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Refresh from the disk in case we had missed notifications about edits from peers.
-	if err := loadGlobalTransitionTierConfig(); err != nil {
+	if err := globalTierConfigMgr.Reload(); err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}

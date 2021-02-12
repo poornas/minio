@@ -110,7 +110,7 @@ func (config *TierConfigMgr) ListTiers() []madmin.TierConfig {
 	for _, tier := range config.Tiers {
 		// This makes a local copy of tier config before
 		// passing a reference to it.
-		tier := tier
+		tier := tier.Clone()
 		tierCfgs = append(tierCfgs, tier)
 	}
 	return tierCfgs
@@ -161,8 +161,8 @@ func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error
 
 // Bytes returns msgpack encoded config with format and version headers.
 func (config *TierConfigMgr) Bytes() ([]byte, error) {
-	config.Lock()
-	defer config.Unlock()
+	config.RLock()
+	defer config.RUnlock()
 	data := make([]byte, 4, config.Msgsize()+4)
 
 	// Initialize the header.
@@ -252,61 +252,89 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 	return pReader, opts, nil
 }
 
+// Reload updates config by reloading remote tier config from config store.
+func (config *TierConfigMgr) Reload() error {
+	newConfig, err := loadTransitionTierConfig()
+	if err != nil {
+		return err
+	}
+
+	config.Lock()
+	defer config.Unlock()
+	// Reset drivercache built using current config
+	for k := range config.drivercache {
+		delete(config.drivercache, k)
+	}
+	// Remove existing tier configs
+	for k := range config.Tiers {
+		delete(config.Tiers, k)
+	}
+	// Copy over the new tier configs
+	for tier, cfg := range newConfig.Tiers {
+		config.Tiers[tier] = cfg
+	}
+
+	return nil
+}
+
 func saveGlobalTierConfig() error {
 	pr, opts, err := globalTierConfigMgr.configReader()
 	if err != nil {
 		return err
 	}
 
-	_, err = globalObjectAPI.PutObject(context.Background(), minioMetaBucket, tierConfigPath, pr, *opts)
+	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return errServerNotInitialized
+	}
+	_, err = objAPI.PutObject(context.Background(), minioMetaBucket, tierConfigPath, pr, *opts)
 	return err
 }
 
-func loadGlobalTransitionTierConfig() error {
-	data, err := readConfig(context.Background(), globalObjectAPI, tierConfigPath)
+func newTierConfigMgr() *TierConfigMgr {
+	return &TierConfigMgr{
+		drivercache: make(map[string]WarmBackend),
+		Tiers:       make(map[string]madmin.TierConfig),
+	}
+}
+
+func loadTransitionTierConfig() (*TierConfigMgr, error) {
+	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return nil, errServerNotInitialized
+	}
+
+	data, err := readConfig(context.Background(), objAPI, tierConfigPath)
 	switch err {
 	case nil:
 		break
 	case errConfigNotFound:
-		globalTierConfigMgr = &TierConfigMgr{
-			RWMutex:     sync.RWMutex{},
-			drivercache: make(map[string]WarmBackend),
-			Tiers:       make(map[string]madmin.TierConfig),
-		}
-		return nil
+		return newTierConfigMgr(), nil
 	default:
-		return err
+		return nil, err
 	}
 
 	if len(data) <= 4 {
-		return fmt.Errorf("loadTierConfig: no data")
+		return nil, fmt.Errorf("loadTierConfig: no data")
 	}
 
 	// Read header
 	switch binary.LittleEndian.Uint16(data[0:2]) {
 	case tierConfigFormat:
 	default:
-		return fmt.Errorf("loadTierConfig: unknown format: %d", binary.LittleEndian.Uint16(data[0:2]))
+		return nil, fmt.Errorf("loadTierConfig: unknown format: %d", binary.LittleEndian.Uint16(data[0:2]))
 	}
 	switch binary.LittleEndian.Uint16(data[2:4]) {
 	case tierConfigVersion:
 	default:
-		return fmt.Errorf("loadTierConfig: unknown version: %d", binary.LittleEndian.Uint16(data[2:4]))
+		return nil, fmt.Errorf("loadTierConfig: unknown version: %d", binary.LittleEndian.Uint16(data[2:4]))
 	}
 
-	var config TierConfigMgr
+	config := newTierConfigMgr()
 	_, decErr := config.UnmarshalMsg(data[4:])
 	if decErr != nil {
-		return err
+		return nil, err
 	}
 
-	if config.drivercache == nil {
-		config.drivercache = make(map[string]WarmBackend)
-	}
-	if config.Tiers == nil {
-		config.Tiers = make(map[string]madmin.TierConfig)
-	}
-
-	globalTierConfigMgr = &config
-	return nil
+	return config, nil
 }
