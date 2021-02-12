@@ -20,9 +20,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
-	"net/http"
+	"fmt"
 	"path"
 	"strings"
 	"sync"
@@ -31,8 +31,7 @@ import (
 	"github.com/minio/minio/pkg/madmin"
 )
 
-// TierConfigPath refers to remote tier config object name
-var TierConfigPath string = path.Join(minioConfigPrefix, "tier-config.json")
+//go:generate msgp -file $GOFILE
 
 var (
 	errTierInsufficientCreds = errors.New("insufficient tier credentials supplied")
@@ -40,11 +39,21 @@ var (
 	errTierTypeUnsupported   = errors.New("Unsupported tier type")
 )
 
+const (
+	tierConfigFile    = "tier-config.bin"
+	tierConfigFormat  = 1
+	tierConfigVersion = 1
+)
+
+// tierConfigPath refers to remote tier config object name
+var tierConfigPath string = path.Join(minioConfigPrefix, tierConfigFile)
+
 // TierConfigMgr holds the collection of remote tiers configured in this deployment.
 type TierConfigMgr struct {
-	sync.RWMutex
-	drivercache map[string]WarmBackend
-	Tiers       map[string]madmin.TierConfig `json:"tiers"`
+	sync.RWMutex `msg:"-"`
+	drivercache  map[string]WarmBackend `msg:"-"`
+
+	Tiers map[string]madmin.TierConfig `json:"tiers"`
 }
 
 // isTierNameInUse returns tier type and true if there exists a remote tier by
@@ -62,6 +71,7 @@ func (config *TierConfigMgr) Add(tier madmin.TierConfig) error {
 	defer config.Unlock()
 
 	// check if tier name is in all caps
+
 	tierName := tier.Name
 	if tierName != strings.ToUpper(tierName) {
 		return errTierNameNotUppercase
@@ -132,6 +142,7 @@ func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error
 		}
 		newCfg.Azure.AccountName = creds.AccessKey
 		newCfg.Azure.AccountKey = creds.SecretKey
+
 	case madmin.GCS:
 		if creds.CredsJSON == nil {
 			return errTierInsufficientCreds
@@ -148,15 +159,22 @@ func (config *TierConfigMgr) Edit(tierName string, creds madmin.TierCreds) error
 	return nil
 }
 
-// Bytes returns the json encoded bytes of config
+// Bytes returns msgpack encoded config with format and version headers.
 func (config *TierConfigMgr) Bytes() ([]byte, error) {
 	config.Lock()
 	defer config.Unlock()
-	return json.Marshal(config)
+	data := make([]byte, 4, config.Msgsize()+4)
+
+	// Initialize the header.
+	binary.LittleEndian.PutUint16(data[0:2], tierConfigFormat)
+	binary.LittleEndian.PutUint16(data[2:4], tierConfigVersion)
+
+	// Marshal the tier config
+	return config.MarshalMsg(data)
 }
 
-// GetDriver returns a warmbackend interface object initialized with remote tier config matching tierName
-func (config *TierConfigMgr) GetDriver(tierName string) (d WarmBackend, err error) {
+// getDriver returns a warmBackend interface object initialized with remote tier config matching tierName
+func (config *TierConfigMgr) getDriver(tierName string) (d WarmBackend, err error) {
 	config.Lock()
 	defer config.Unlock()
 
@@ -208,7 +226,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 	metadata := make(map[string]string)
 	sseS3 := true
 	var extKey [32]byte
-	encBr, oek, err := newEncryptReader(hr, extKey[:], minioMetaBucket, TierConfigPath, metadata, sseS3)
+	encBr, oek, err := newEncryptReader(hr, extKey[:], minioMetaBucket, tierConfigPath, metadata, sseS3)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -221,6 +239,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 	if err != nil {
 		return nil, nil, err
 	}
+
 	pReader, err := NewPutObjReader(hr).WithEncryption(encHr, &oek)
 	if err != nil {
 		return nil, nil, err
@@ -229,6 +248,7 @@ func (config *TierConfigMgr) configReader() (*PutObjReader, *ObjectOptions, erro
 		UserDefined: metadata,
 		MTime:       UTCNow(),
 	}
+
 	return pReader, opts, nil
 }
 
@@ -238,31 +258,48 @@ func saveGlobalTierConfig() error {
 		return err
 	}
 
-	_, err = globalObjectAPI.PutObject(context.Background(), minioMetaBucket, TierConfigPath, pr, *opts)
+	_, err = globalObjectAPI.PutObject(context.Background(), minioMetaBucket, tierConfigPath, pr, *opts)
 	return err
 }
 
 func loadGlobalTransitionTierConfig() error {
-	objReadCloser, err := globalObjectAPI.GetObjectNInfo(context.Background(), minioMetaBucket, TierConfigPath, nil, http.Header{}, readLock, ObjectOptions{})
-	if err != nil {
-		if isErrObjectNotFound(err) {
-			globalTierConfigMgr = &TierConfigMgr{
-				RWMutex:     sync.RWMutex{},
-				drivercache: make(map[string]WarmBackend),
-				Tiers:       make(map[string]madmin.TierConfig),
-			}
-			return nil
+	data, err := readConfig(context.Background(), globalObjectAPI, tierConfigPath)
+	switch err {
+	case nil:
+		break
+	case errConfigNotFound:
+		globalTierConfigMgr = &TierConfigMgr{
+			RWMutex:     sync.RWMutex{},
+			drivercache: make(map[string]WarmBackend),
+			Tiers:       make(map[string]madmin.TierConfig),
 		}
+		return nil
+	default:
 		return err
 	}
 
-	defer objReadCloser.Close()
+	if len(data) <= 4 {
+		return fmt.Errorf("loadTierConfig: no data")
+	}
+
+	// Read header
+	switch binary.LittleEndian.Uint16(data[0:2]) {
+	case tierConfigFormat:
+	default:
+		return fmt.Errorf("loadTierConfig: unknown format: %d", binary.LittleEndian.Uint16(data[0:2]))
+	}
+	switch binary.LittleEndian.Uint16(data[2:4]) {
+	case tierConfigVersion:
+	default:
+		return fmt.Errorf("loadTierConfig: unknown version: %d", binary.LittleEndian.Uint16(data[2:4]))
+	}
 
 	var config TierConfigMgr
-	err = json.NewDecoder(objReadCloser).Decode(&config)
-	if err != nil {
+	_, decErr := config.UnmarshalMsg(data[4:])
+	if decErr != nil {
 		return err
 	}
+
 	if config.drivercache == nil {
 		config.drivercache = make(map[string]WarmBackend)
 	}

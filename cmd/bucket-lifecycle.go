@@ -189,7 +189,7 @@ func validateLifecycleTransition(ctx context.Context, bucket string, lfc *lifecy
 // validateTransitionDestination returns error if transition destination bucket missing or not configured
 // It also returns true if transition destination is same as this server.
 func validateTransitionDestination(sc string) error {
-	backend, err := globalTierConfigMgr.GetDriver(sc)
+	backend, err := globalTierConfigMgr.getDriver(sc)
 	if err != nil {
 		return TransitionStorageClassNotFound{}
 	}
@@ -205,7 +205,7 @@ func validateTransitionDestination(sc string) error {
 // 2. life cycle expiry date is met on the object.
 // 3. Object is removed through DELETE api call
 func deleteTransitionedObject(ctx context.Context, objectAPI ObjectLayer, bucket, object string, lcOpts lifecycle.ObjectOpts, tgtObjName, transitionSC string, restoredObject, expiryEvent bool) error {
-	tgtClient, err := globalTierConfigMgr.GetDriver(transitionSC)
+	tgtClient, err := globalTierConfigMgr.getDriver(transitionSC)
 	if err != nil {
 		return err
 	}
@@ -307,7 +307,7 @@ func getLifeCycleTransitionTier(ctx context.Context, lc *lifecycle.Lifecycle, bu
 
 // getTransitionedObjectReader returns a reader from the transitioned tier.
 func getTransitionedObjectReader(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, oi ObjectInfo, opts ObjectOptions) (gr *GetObjectReader, err error) {
-	tgtClient, err := globalTierConfigMgr.GetDriver(oi.TransitionTier)
+	tgtClient, err := globalTierConfigMgr.getDriver(oi.TransitionTier)
 	if err != nil {
 		return nil, fmt.Errorf("transition storage class not configured")
 	}

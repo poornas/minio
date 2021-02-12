@@ -17,6 +17,8 @@
 
 package madmin
 
+//go:generate msgp -file $GOFILE
+
 // TierAzure represents the remote tier configuration for Azure Blob Storage.
 type TierAzure struct {
 	Endpoint     string `json:",omitempty"`

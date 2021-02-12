@@ -108,6 +108,7 @@ func (adm *AdminClient) EditTier(ctx context.Context, tierName string, creds Tie
 	if err != nil {
 		return err
 	}
+
 	reqData := requestData{
 		relPath: strings.Join([]string{adminAPIPrefix, TierAPI, tierName}, "/"),
 		content: encData,
