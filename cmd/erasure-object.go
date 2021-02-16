@@ -372,14 +372,12 @@ func (er erasureObjects) getObject(ctx context.Context, bucket, object string, s
 
 // GetObjectInfo - reads object metadata and replies back ObjectInfo.
 func (er erasureObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts ObjectOptions) (info ObjectInfo, err error) {
-	if !opts.NoLock {
-		// Lock the object before reading.
-		lk := er.NewNSLock(bucket, object)
-		if err := lk.GetRLock(ctx, globalOperationTimeout); err != nil {
-			return ObjectInfo{}, err
-		}
-		defer lk.RUnlock()
+	// Lock the object before reading.
+	lk := er.NewNSLock(bucket, object)
+	if err := lk.GetRLock(ctx, globalOperationTimeout); err != nil {
+		return ObjectInfo{}, err
 	}
+	defer lk.RUnlock()
 
 	return er.getObjectInfo(ctx, bucket, object, opts)
 }

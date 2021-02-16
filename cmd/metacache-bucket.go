@@ -64,7 +64,7 @@ func newBucketMetacache(bucket string, cleanup bool) *bucketMetacache {
 		ez, ok := objAPI.(*erasureServerPools)
 		if ok {
 			ctx := context.Background()
-			ez.renameAll(ctx, minioMetaBucket, metacachePrefixForID(bucket, slashSeparator))
+			ez.deleteAll(ctx, minioMetaBucket, metacachePrefixForID(bucket, slashSeparator))
 		}
 	}
 	return &bucketMetacache{
@@ -292,7 +292,7 @@ func (b *bucketMetacache) cleanup() {
 	caches, rootIdx := b.cloneCaches()
 
 	for id, cache := range caches {
-		if b.transient && time.Since(cache.lastUpdate) > 10*time.Minute && time.Since(cache.lastHandout) > 10*time.Minute {
+		if b.transient && time.Since(cache.lastUpdate) > 15*time.Minute && time.Since(cache.lastHandout) > 15*time.Minute {
 			// Keep transient caches only for 15 minutes.
 			remove[id] = struct{}{}
 			continue
@@ -361,7 +361,7 @@ func (b *bucketMetacache) cleanup() {
 			})
 			// Keep first metacacheMaxEntries...
 			for _, cache := range remainCaches[metacacheMaxEntries:] {
-				if time.Since(cache.lastHandout) > 30*time.Minute {
+				if time.Since(cache.lastHandout) > time.Hour {
 					remove[cache.id] = struct{}{}
 				}
 			}
@@ -409,6 +409,7 @@ func (b *bucketMetacache) updateCacheEntry(update metacache) (metacache, error) 
 	defer b.mu.Unlock()
 	existing, ok := b.caches[update.id]
 	if !ok {
+		logger.Info("updateCacheEntry: bucket %s list id %v not found", b.bucket, update.id)
 		return update, errFileNotFound
 	}
 	existing.update(update)
@@ -464,7 +465,7 @@ func (b *bucketMetacache) deleteAll() {
 	b.updated = true
 	if !b.transient {
 		// Delete all.
-		ez.renameAll(ctx, minioMetaBucket, metacachePrefixForID(b.bucket, slashSeparator))
+		ez.deleteAll(ctx, minioMetaBucket, metacachePrefixForID(b.bucket, slashSeparator))
 		b.caches = make(map[string]metacache, 10)
 		b.cachesRoot = make(map[string][]string, 10)
 		return
@@ -476,7 +477,7 @@ func (b *bucketMetacache) deleteAll() {
 		wg.Add(1)
 		go func(cache metacache) {
 			defer wg.Done()
-			ez.renameAll(ctx, minioMetaBucket, metacachePrefixForID(cache.bucket, cache.id))
+			ez.deleteAll(ctx, minioMetaBucket, metacachePrefixForID(cache.bucket, cache.id))
 		}(b.caches[id])
 	}
 	wg.Wait()

@@ -85,18 +85,18 @@ type FileInfoVersions struct {
 	Versions []FileInfo
 }
 
-// findVersionIndex will return the version index where the version
-// was found. Returns -1 if not found.
-func (f *FileInfoVersions) findVersionIndex(v string) int {
-	if f == nil || v == "" {
-		return -1
+// forwardPastVersion will truncate the result to only contain versions after 'v'.
+// If v is empty or the version isn't found no changes will be made.
+func (f *FileInfoVersions) forwardPastVersion(v string) {
+	if v == "" {
+		return
 	}
 	for i, ver := range f.Versions {
 		if ver.VersionID == v {
-			return i
+			f.Versions = f.Versions[i+1:]
+			return
 		}
 	}
-	return -1
 }
 
 // FileInfo - represents file stat information.

@@ -511,71 +511,16 @@ func (z *erasureServerPools) GetObjectNInfo(ctx context.Context, bucket, object 
 
 	object = encodeDirObject(object)
 
-	if z.SinglePool() {
-		return z.serverPools[0].GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
-	}
-
-	var unlockOnDefer bool
-	var nsUnlocker = func() {}
-	defer func() {
-		if unlockOnDefer {
-			nsUnlocker()
-		}
-	}()
-
-	// Acquire lock
-	if lockType != noLock {
-		lock := z.NewNSLock(bucket, object)
-		switch lockType {
-		case writeLock:
-			if err = lock.GetLock(ctx, globalOperationTimeout); err != nil {
-				return nil, err
-			}
-			nsUnlocker = lock.Unlock
-		case readLock:
-			if err = lock.GetRLock(ctx, globalOperationTimeout); err != nil {
-				return nil, err
-			}
-			nsUnlocker = lock.RUnlock
-		}
-		unlockOnDefer = true
-	}
-
-	errs := make([]error, len(z.serverPools))
-	grs := make([]*GetObjectReader, len(z.serverPools))
-
-	lockType = noLock // do not take locks at lower levels
-	var wg sync.WaitGroup
-	for i, pool := range z.serverPools {
-		wg.Add(1)
-		go func(i int, pool *erasureSets) {
-			defer wg.Done()
-			grs[i], errs[i] = pool.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
-		}(i, pool)
-	}
-	wg.Wait()
-
-	var found int = -1
-	for i, err := range errs {
-		if err == nil {
-			found = i
-			break
-		}
-		if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
-			for _, grr := range grs {
-				if grr != nil {
-					grr.Close()
-				}
+	for _, pool := range z.serverPools {
+		gr, err = pool.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
+		if err != nil {
+			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
+				continue
 			}
 			return gr, err
 		}
+		return gr, nil
 	}
-
-	if found >= 0 {
-		return grs[found], nil
-	}
-
-	object = decodeDirObject(object)
 	if opts.VersionID != "" {
 		return gr, VersionNotFound{Bucket: bucket, Object: object, VersionID: opts.VersionID}
 	}
@@ -588,6 +533,7 @@ func (z *erasureServerPools) GetObject(ctx context.Context, bucket, object strin
 	}
 
 	object = encodeDirObject(object)
+
 	for _, pool := range z.serverPools {
 		if err := pool.GetObject(ctx, bucket, object, startOffset, length, writer, etag, opts); err != nil {
 			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
@@ -609,49 +555,16 @@ func (z *erasureServerPools) GetObjectInfo(ctx context.Context, bucket, object s
 	}
 
 	object = encodeDirObject(object)
-
-	if z.SinglePool() {
-		return z.serverPools[0].GetObjectInfo(ctx, bucket, object, opts)
-	}
-
-	// Lock the object before reading.
-	lk := z.NewNSLock(bucket, object)
-	if err := lk.GetRLock(ctx, globalOperationTimeout); err != nil {
-		return ObjectInfo{}, err
-	}
-	defer lk.RUnlock()
-
-	errs := make([]error, len(z.serverPools))
-	objInfos := make([]ObjectInfo, len(z.serverPools))
-
-	opts.NoLock = true // avoid taking locks at lower levels for multi-pool setups.
-	var wg sync.WaitGroup
-	for i, pool := range z.serverPools {
-		wg.Add(1)
-		go func(i int, pool *erasureSets) {
-			defer wg.Done()
-			objInfos[i], errs[i] = pool.GetObjectInfo(ctx, bucket, object, opts)
-		}(i, pool)
-	}
-	wg.Wait()
-
-	var found int = -1
-	for i, err := range errs {
-		if err == nil {
-			found = i
-			break
+	for _, pool := range z.serverPools {
+		objInfo, err = pool.GetObjectInfo(ctx, bucket, object, opts)
+		if err != nil {
+			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
+				continue
+			}
+			return objInfo, err
 		}
-		if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
-			// some errors such as MethodNotAllowed for delete marker
-			// should be returned upwards.
-			return objInfos[i], err
-		}
+		return objInfo, nil
 	}
-
-	if found >= 0 {
-		return objInfos[found], nil
-	}
-
 	object = decodeDirObject(object)
 	if opts.VersionID != "" {
 		return objInfo, VersionNotFound{Bucket: bucket, Object: object, VersionID: opts.VersionID}
@@ -687,6 +600,7 @@ func (z *erasureServerPools) DeleteObject(ctx context.Context, bucket string, ob
 	}
 
 	object = encodeDirObject(object)
+
 	if z.SinglePool() {
 		return z.serverPools[0].DeleteObject(ctx, bucket, object, opts)
 	}
@@ -1207,24 +1121,22 @@ func (z *erasureServerPools) DeleteBucket(ctx context.Context, bucket string, fo
 // data is not distributed across sets.
 // Errors are logged but individual disk failures are not returned.
 func (z *erasureServerPools) deleteAll(ctx context.Context, bucket, prefix string) {
+	var wg sync.WaitGroup
 	for _, servers := range z.serverPools {
 		for _, set := range servers.sets {
-			set.deleteAll(ctx, bucket, prefix)
+			for _, disk := range set.getDisks() {
+				if disk == nil {
+					continue
+				}
+				wg.Add(1)
+				go func(disk StorageAPI) {
+					defer wg.Done()
+					disk.Delete(ctx, bucket, prefix, true)
+				}(disk)
+			}
 		}
 	}
-}
-
-// renameAll will rename bucket+prefix unconditionally across all disks to
-// minioMetaTmpBucket + unique uuid,
-// Note that set distribution is ignored so it should only be used in cases where
-// data is not distributed across sets. Errors are logged but individual
-// disk failures are not returned.
-func (z *erasureServerPools) renameAll(ctx context.Context, bucket, prefix string) {
-	for _, servers := range z.serverPools {
-		for _, set := range servers.sets {
-			set.renameAll(ctx, bucket, prefix)
-		}
-	}
+	wg.Wait()
 }
 
 // This function is used to undo a successful DeleteBucket operation.
@@ -1676,13 +1588,27 @@ func (z *erasureServerPools) PutObjectTags(ctx context.Context, bucket, object s
 		return z.serverPools[0].PutObjectTags(ctx, bucket, object, tags, opts)
 	}
 
-	// We don't know the size here set 1GiB atleast.
-	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
-	if err != nil {
-		return ObjectInfo{}, err
+	for _, pool := range z.serverPools {
+		objInfo, err := pool.PutObjectTags(ctx, bucket, object, tags, opts)
+		if err != nil {
+			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
+				continue
+			}
+			return ObjectInfo{}, err
+		}
+		return objInfo, nil
 	}
-
-	return z.serverPools[idx].PutObjectTags(ctx, bucket, object, tags, opts)
+	if opts.VersionID != "" {
+		return ObjectInfo{}, VersionNotFound{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+		}
+	}
+	return ObjectInfo{}, ObjectNotFound{
+		Bucket: bucket,
+		Object: object,
+	}
 }
 
 // DeleteObjectTags - delete object tags from an existing object
@@ -1691,14 +1617,27 @@ func (z *erasureServerPools) DeleteObjectTags(ctx context.Context, bucket, objec
 	if z.SinglePool() {
 		return z.serverPools[0].DeleteObjectTags(ctx, bucket, object, opts)
 	}
-
-	// We don't know the size here set 1GiB atleast.
-	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
-	if err != nil {
-		return ObjectInfo{}, err
+	for _, pool := range z.serverPools {
+		objInfo, err := pool.DeleteObjectTags(ctx, bucket, object, opts)
+		if err != nil {
+			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
+				continue
+			}
+			return ObjectInfo{}, err
+		}
+		return objInfo, nil
 	}
-
-	return z.serverPools[idx].DeleteObjectTags(ctx, bucket, object, opts)
+	if opts.VersionID != "" {
+		return ObjectInfo{}, VersionNotFound{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+		}
+	}
+	return ObjectInfo{}, ObjectNotFound{
+		Bucket: bucket,
+		Object: object,
+	}
 }
 
 // GetObjectTags - get object tags from an existing object
@@ -1707,44 +1646,27 @@ func (z *erasureServerPools) GetObjectTags(ctx context.Context, bucket, object s
 	if z.SinglePool() {
 		return z.serverPools[0].GetObjectTags(ctx, bucket, object, opts)
 	}
-
-	// We don't know the size here set 1GiB atleast.
-	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
-	if err != nil {
-		return nil, err
+	for _, pool := range z.serverPools {
+		tags, err := pool.GetObjectTags(ctx, bucket, object, opts)
+		if err != nil {
+			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
+				continue
+			}
+			return tags, err
+		}
+		return tags, nil
 	}
-
-	return z.serverPools[idx].GetObjectTags(ctx, bucket, object, opts)
-}
-
-// TransitionObject - transition object content to target tier.
-func (z *erasureServerPools) TransitionObject(ctx context.Context, bucket, object string, opts ObjectOptions) error {
-	object = encodeDirObject(object)
-	if z.SinglePool() {
-		return z.serverPools[0].TransitionObject(ctx, bucket, object, opts)
+	if opts.VersionID != "" {
+		return nil, VersionNotFound{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+		}
 	}
-	// We don't know the size here set 1GiB atleast.
-	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
-	if err != nil {
-		return err
+	return nil, ObjectNotFound{
+		Bucket: bucket,
+		Object: object,
 	}
-
-	return z.serverPools[idx].TransitionObject(ctx, bucket, object, opts)
-}
-
-// RestoreTransitionedObject - restore transitioned object content locally on this cluster.
-func (z *erasureServerPools) RestoreTransitionedObject(ctx context.Context, bucket, object string, opts ObjectOptions) error {
-	object = encodeDirObject(object)
-	if z.SinglePool() {
-		return z.serverPools[0].RestoreTransitionedObject(ctx, bucket, object, opts)
-	}
-	// We don't know the size here set 1GiB atleast.
-	idx, err := z.getPoolIdx(ctx, bucket, object, 1<<30)
-	if err != nil {
-		return err
-	}
-
-	return z.serverPools[idx].RestoreTransitionedObject(ctx, bucket, object, opts)
 }
 
 // TransitionObject - transition object content to target tier.

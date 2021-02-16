@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/minio/minio/cmd/http"
 	xhttp "github.com/minio/minio/cmd/http"
@@ -119,6 +120,8 @@ type storageRESTClient struct {
 	endpoint   Endpoint
 	restClient *rest.Client
 	diskID     string
+
+	diskInfoCache timedValue
 }
 
 // Wrapper to restClient.Call to handle network errors, in case of network error the connection is makred disconnected
@@ -215,18 +218,27 @@ func (client *storageRESTClient) SetDiskID(id string) {
 
 // DiskInfo - fetch disk information for a remote disk.
 func (client *storageRESTClient) DiskInfo(ctx context.Context) (info DiskInfo, err error) {
-	respBody, err := client.call(ctx, storageRESTMethodDiskInfo, nil, nil, -1)
-	if err != nil {
-		return info, err
-	}
-	defer http.DrainBody(respBody)
-	if err = msgp.Decode(respBody, &info); err != nil {
-		return info, err
-	}
-	if info.Error != "" {
-		return info, toStorageErr(errors.New(info.Error))
-	}
-	return info, nil
+	client.diskInfoCache.Once.Do(func() {
+		client.diskInfoCache.TTL = time.Second
+		client.diskInfoCache.Update = func() (interface{}, error) {
+			var info DiskInfo
+			respBody, err := client.call(ctx, storageRESTMethodDiskInfo, nil, nil, -1)
+			if err != nil {
+				return info, err
+			}
+			defer http.DrainBody(respBody)
+			if err = msgp.Decode(respBody, &info); err != nil {
+				return info, err
+			}
+			if info.Error != "" {
+				return info, toStorageErr(errors.New(info.Error))
+			}
+			return info, nil
+		}
+	})
+	v, err := client.diskInfoCache.Get()
+	info = v.(DiskInfo)
+	return info, err
 }
 
 // MakeVolBulk - create multiple volumes in a bulk operation.

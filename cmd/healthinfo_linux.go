@@ -37,10 +37,7 @@ func getLocalOsInfo(ctx context.Context, r *http.Request) madmin.ServerOsInfo {
 		addr = GetLocalPeer(globalEndpoints)
 	}
 
-	srvrOsInfo := madmin.ServerOsInfo{Addr: addr}
-	var err error
-
-	srvrOsInfo.Info, err = host.InfoWithContext(ctx)
+	info, err := host.InfoWithContext(ctx)
 	if err != nil {
 		return madmin.ServerOsInfo{
 			Addr:  addr,
@@ -48,18 +45,23 @@ func getLocalOsInfo(ctx context.Context, r *http.Request) madmin.ServerOsInfo {
 		}
 	}
 
-	srvrOsInfo.Sensors, err = host.SensorsTemperaturesWithContext(ctx)
+	sensors, err := host.SensorsTemperaturesWithContext(ctx)
 	if err != nil {
-		// Set error only when it's not of WARNINGS type
-		if _, isWarning := err.(*host.Warnings); !isWarning {
-			srvrOsInfo.Error = fmt.Sprintf("sensors-temp: %v", err)
+		return madmin.ServerOsInfo{
+			Addr:  addr,
+			Error: fmt.Sprintf("sensors-temp: %v", err),
 		}
 	}
 
 	// ignore user err, as it cannot be obtained reliably inside containers
-	srvrOsInfo.Users, _ = host.UsersWithContext(ctx)
+	users, _ := host.UsersWithContext(ctx)
 
-	return srvrOsInfo
+	return madmin.ServerOsInfo{
+		Addr:    addr,
+		Info:    info,
+		Sensors: sensors,
+		Users:   users,
+	}
 }
 
 func getLocalDiskHwInfo(ctx context.Context, r *http.Request) madmin.ServerDiskHwInfo {

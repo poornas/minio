@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strings"
 	"sync"
@@ -296,10 +295,7 @@ func validateConfig(s config.Config, setDriveCounts []int) error {
 		}
 	}
 	{
-		kmsCfg, err := crypto.LookupConfig(s, globalCertsCADir.Get(), newCustomHTTPTransportWithHTTP2(
-			&tls.Config{
-				RootCAs: globalRootCAs,
-			}, defaultDialTimeout)())
+		kmsCfg, err := crypto.LookupConfig(s, globalCertsCADir.Get(), NewGatewayHTTPTransport())
 		if err != nil {
 			return err
 		}
@@ -475,10 +471,7 @@ func lookupConfigs(s config.Config, setDriveCounts []int) {
 		}
 	}
 
-	kmsCfg, err := crypto.LookupConfig(s, globalCertsCADir.Get(), newCustomHTTPTransportWithHTTP2(
-		&tls.Config{
-			RootCAs: globalRootCAs,
-		}, defaultDialTimeout)())
+	kmsCfg, err := crypto.LookupConfig(s, globalCertsCADir.Get(), NewGatewayHTTPTransport())
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Unable to setup KMS config: %w", err))
 	}
