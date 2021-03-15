@@ -484,7 +484,6 @@ func (er erasureObjects) PutObjectPart(ctx context.Context, bucket, object, uplo
 	if err != nil {
 		return pi, toObjectErr(err, bucket, object)
 	}
-
 	// Should return IncompleteBody{} error when reader has fewer bytes
 	// than specified in request header.
 	if n < data.Size() {
@@ -561,7 +560,6 @@ func (er erasureObjects) PutObjectPart(ctx context.Context, bucket, object, uplo
 	if _, err = writeUniqueFileInfo(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath, partsMetadata, writeQuorum); err != nil {
 		return pi, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
 	}
-
 	// Return success.
 	return PartInfo{
 		PartNumber:   partID,

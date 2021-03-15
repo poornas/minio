@@ -25,6 +25,7 @@ import (
 	"time"
 
 	minio "github.com/minio/minio-go/v7"
+	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio/pkg/madmin"
 )
@@ -55,7 +56,8 @@ func (s3 *warmBackendS3) getDest(object string) string {
 }
 
 func (s3 *warmBackendS3) Put(ctx context.Context, object string, r io.Reader, length int64) error {
-	_, err := s3.client.PutObject(ctx, s3.Bucket, s3.getDest(object), r, length, minio.PutObjectOptions{StorageClass: s3.StorageClass})
+	c := &miniogo.Core{Client: s3.client}
+	_, err := c.PutObject(ctx, s3.Bucket, s3.getDest(object), r, length, "", "", minio.PutObjectOptions{StorageClass: s3.StorageClass})
 	return s3.ToObjectError(err, object)
 }
 
@@ -67,15 +69,13 @@ func (s3 *warmBackendS3) Get(ctx context.Context, object string, opts warmBacken
 			return nil, s3.ToObjectError(err, object)
 		}
 	}
+	c := &miniogo.Core{Client: s3.client}
 
-	r, err := s3.client.GetObject(ctx, s3.Bucket, s3.getDest(object), gopts)
+	r, objInfo, headers, err := c.GetObject(ctx, s3.Bucket, s3.getDest(object), gopts)
 	if err != nil {
 		return nil, s3.ToObjectError(err, object)
 	}
-	if _, err = r.Stat(); err != nil {
-		r.Close()
-		return nil, s3.ToObjectError(err, object)
-	}
+	fmt.Println(objInfo, " headers>", headers)
 	return r, nil
 }
 

@@ -327,8 +327,8 @@ func getTransitionedObjectReader(ctx context.Context, bucket, object string, rs 
 	if off >= 0 && length >= 0 {
 		gopts.startOffset = off
 		gopts.length = length
+		fmt.Println("start and end offset for range get>", off, length)
 	}
-
 	reader, err := tgtClient.Get(ctx, oi.transitionedObjName, gopts)
 	if err != nil {
 		return nil, err

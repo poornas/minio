@@ -3665,6 +3665,7 @@ func (api objectAPIHandlers) PostRestoreObjectHandler(w http.ResponseWriter, r *
 			VersionID: objInfo.VersionID,
 		}
 		if err := objectAPI.RestoreTransitionedObject(rctx, bucket, object, opts); err != nil {
+			logger.LogIf(ctx, err)
 			return
 		}
 

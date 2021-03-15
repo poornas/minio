@@ -1382,34 +1382,276 @@ func (er erasureObjects) TransitionObject(ctx context.Context, bucket, object st
 // is restored locally to the bucket on source cluster until the restore expiry date.
 // The copy that was transitioned continues to reside in the transitioned tier.
 func (er erasureObjects) RestoreTransitionedObject(ctx context.Context, bucket, object string, opts ObjectOptions) error {
-	// Acquire a write lock before restoring the object.
-	lk := er.NewNSLock(bucket, object)
-	ctx, err := lk.GetLock(ctx, globalDeleteOperationTimeout)
-	if err != nil {
-		return err
-	}
-	defer lk.Unlock()
 	oi, err := er.getObjectInfo(ctx, bucket, object, opts)
 	if err != nil {
 		return err
 	}
-	var rs *HTTPRangeSpec
-	gr, err := getTransitionedObjectReader(ctx, bucket, object, rs, http.Header{}, oi, ObjectOptions{
-		VersionID: oi.VersionID})
+
+	if len(oi.Parts) == 1 {
+		var rs *HTTPRangeSpec
+		gr, err := getTransitionedObjectReader(ctx, bucket, object, rs, http.Header{}, oi, ObjectOptions{
+			VersionID: oi.VersionID})
+		if err != nil {
+			return err
+		}
+		defer gr.Close()
+		actualSize, err := gr.ObjInfo.GetActualSize()
+		hashReader, err := hash.NewReader(gr, actualSize, "", "", actualSize)
+		if err != nil {
+			return err
+		}
+		pReader := NewPutObjReader(hashReader)
+		ropts := putRestoreOpts(bucket, object, opts.Transition.RestoreRequest, oi)
+		ropts.UserDefined[xhttp.AmzRestore] = fmt.Sprintf("ongoing-request=%t, expiry-date=%s", false, opts.Transition.RestoreExpiry.Format(http.TimeFormat))
+		if _, err := er.PutObject(ctx, bucket, object, pReader, ropts); err != nil {
+			return err
+		}
+	}
+
+	return er.restoreTransitionedObject(ctx, bucket, object, opts)
+}
+
+// restoreTransitionedObject for multipart object chunks the file stream from remote tier into the same number of parts
+// as in the xl.meta for this version and rehydrates the part.n into the fi.DataDir for this version as in the xl.meta
+func (er erasureObjects) restoreTransitionedObject(ctx context.Context, bucket string, object string, opts ObjectOptions) error {
+	defer func() {
+		ObjectPathUpdated(pathJoin(bucket, object))
+	}()
+	uploadID, err := er.NewMultipartUpload(ctx, bucket, object, opts)
 	if err != nil {
 		return err
 	}
-	defer gr.Close()
-	hashReader, err := hash.NewReader(gr, oi.Size, "", "", oi.Size)
+	// get the file info on disk for transitioned object
+	actualfi, _, _, err := er.getObjectFileInfo(ctx, bucket, object, opts, false)
+	if err != nil {
+		return toObjectErr(err, bucket, object)
+
+	}
+	oi := actualfi.ToObjectInfo(bucket, object)
+
+	var wg sync.WaitGroup
+
+	var startOffset int64
+	startOffset = 0
+	var uploadErrs = make([]error, len(oi.Parts))
+	var uploadedParts = make([]CompletePart, len(oi.Parts))
+	for i, partInfo := range oi.Parts {
+		wg.Add(1)
+		if i > 0 {
+			startOffset += oi.Parts[i-1].Size
+			fmt.Println("startOffset>", startOffset, oi.Parts[i-1].Size)
+		}
+
+		go func(index int, startOffset int64, partInfo ObjectPartInfo) {
+			defer wg.Done()
+			rs := &HTTPRangeSpec{Start: startOffset, End: startOffset + partInfo.Size - 1}
+			fmt.Println("fetching range>", startOffset, "-", startOffset+partInfo.Size)
+			gr, err := getTransitionedObjectReader(ctx, bucket, object, rs, http.Header{}, oi, ObjectOptions{
+				VersionID: oi.VersionID})
+			if err != nil {
+				uploadErrs[index] = err
+				return
+			}
+			defer gr.Close()
+			hr, err := hash.NewReader(gr, partInfo.Size, "", "", partInfo.Size)
+			if err != nil {
+				uploadErrs[index] = err
+				return
+			}
+			pInfo, err := er.PutObjectPart(ctx, bucket, object, uploadID, index, NewPutObjReader(hr), ObjectOptions{})
+			if err != nil {
+				uploadErrs[index] = err
+
+				return
+			}
+			uploadedParts[index] = CompletePart{
+				PartNumber: pInfo.PartNumber,
+				ETag:       pInfo.ETag,
+			}
+			fmt.Println("uploadedPArts............", index, uploadedParts[index])
+
+		}(i, startOffset, partInfo)
+	}
+	wg.Wait()
+	for i, err := range uploadErrs {
+		if err != nil {
+			//TODO:	markRestoreFailed
+			fmt.Println("uploadedPArts............", i, uploadErrs[i])
+
+			return err
+		}
+	}
+	uploadIDPath := er.getUploadIDDir(bucket, object, uploadID)
+	storageDisks := er.getDisks()
+	// Read metadata associated with the object from all disks.
+	partsMetadata, errs := readAllFileInfo(ctx, storageDisks, minioMetaMultipartBucket, uploadIDPath, "", false)
+
+	// get Quorum for this object
+	_, writeQuorum, err := objectQuorumFromMeta(ctx, partsMetadata, errs, er.defaultParityCount)
+	if err != nil {
+		return toObjectErr(err, bucket, object)
+	}
+
+	reducedErr := reduceWriteQuorumErrs(ctx, errs, objectOpIgnoredErrs, writeQuorum)
+	if reducedErr == errErasureWriteQuorum {
+		return toObjectErr(reducedErr, bucket, object)
+	}
+
+	onlineDisks, modTime := listOnlineDisks(storageDisks, partsMetadata, errs)
+
+	// Pick one from the first valid metadata.
+	fi, err := pickValidFileInfo(ctx, partsMetadata, modTime, writeQuorum)
 	if err != nil {
 		return err
 	}
-	pReader := NewPutObjReader(hashReader)
-	ropts := putRestoreOpts(bucket, object, opts.Transition.RestoreRequest, oi)
-	ropts.UserDefined[xhttp.AmzRestore] = fmt.Sprintf("ongoing-request=%t, expiry-date=%s", false, opts.Transition.RestoreExpiry.Format(http.TimeFormat))
-	ropts.NoLock = true
-	if _, err := er.PutObject(ctx, bucket, object, pReader, ropts); err != nil {
+	//validate parts created via multipart to transitioned object's parts info in xl.meta
+	partsMatch := true
+	if len(actualfi.Parts) != len(fi.Parts) {
+		fmt.Println(fi.Parts, "<====ffu")
+		fmt.Println(actualfi.Parts, "<====actual")
+
+		partsMatch = false
+	}
+	if len(actualfi.Parts) == len(fi.Parts) {
+		for i, pi := range actualfi.Parts {
+			if fi.Parts[i].Size != pi.Size {
+				partsMatch = false
+			}
+		}
+	}
+
+	if !partsMatch {
+		//TODO: mark restore failed and return
+		return fmt.Errorf("error restoring parts do not match")
+	}
+	var currentFI = actualfi
+	currentFI.DataDir = fi.DataDir
+	//TODO: How to copy over current metadata into xl.meta on disk to point to restore datadir
+
+	// Order online disks in accordance with distribution order.
+	// Order parts metadata in accordance with distribution order.
+	//onlineDisks, partsMetadata = shuffleDisksAndPartsMetadataByIndex(onlineDisks, partsMetadata, fi.Erasure.Distribution)
+
+	// // Save current erasure metadata for validation.
+	// var currentFI = fi
+
+	// // Allocate parts similar to incoming slice.
+	// fi.Parts = make([]ObjectPartInfo, len(uploadedParts))
+
+	// // Validate each part and then commit to disk.
+	// for i, part := range uploadedParts {
+	// 	partIdx := objectPartIndex(currentFI.Parts, part.PartNumber)
+	// 	// All parts should have same part number.
+	// 	if partIdx == -1 {
+	// 		invp := InvalidPart{
+	// 			PartNumber: part.PartNumber,
+	// 			GotETag:    part.ETag,
+	// 		}
+	// 		return invp
+	// 	}
+
+	// 	// ensure that part ETag is canonicalized to strip off extraneous quotes
+	// 	part.ETag = canonicalizeETag(part.ETag)
+	// 	if currentFI.Parts[partIdx].ETag != part.ETag {
+	// 		invp := InvalidPart{
+	// 			PartNumber: part.PartNumber,
+	// 			ExpETag:    currentFI.Parts[partIdx].ETag,
+	// 			GotETag:    part.ETag,
+	// 		}
+	// 		return invp
+	// 	}
+
+	// 	if (i < len(uploadedParts)-1) && !isMinAllowedPartSize(currentFI.Parts[partIdx].ActualSize) {
+	// 		return PartTooSmall{
+	// 			PartNumber: part.PartNumber,
+	// 			PartSize:   currentFI.Parts[partIdx].ActualSize,
+	// 			PartETag:   part.ETag,
+	// 		}
+	// 	}
+
+	// 	// Save for total object size.
+	// 	objectSize += currentFI.Parts[partIdx].Size
+
+	// 	// Save the consolidated actual size.
+	// 	objectActualSize += currentFI.Parts[partIdx].ActualSize
+
+	// 	// Add incoming parts.
+	// 	fi.Parts[i] = ObjectPartInfo{
+	// 		Number:     part.PartNumber,
+	// 		Size:       currentFI.Parts[partIdx].Size,
+	// 		ActualSize: currentFI.Parts[partIdx].ActualSize,
+	// 	}
+	// }
+
+	// // Save the final object size and modtime.
+	// fi.Size = objectSize
+	// fi.ModTime = opts.MTime
+	// if opts.MTime.IsZero() {
+	// 	fi.ModTime = UTCNow()
+	// }
+
+	// Save successfully calculated md5sum.
+	// fi.Metadata["etag"] = s3MD5
+	// if opts.UserDefined["etag"] != "" { // preserve ETag if set
+	// 	fi.Metadata["etag"] = opts.UserDefined["etag"]
+	// }
+
+	// Save the consolidated actual size.
+	//fi.Metadata[ReservedMetadataPrefix+"actual-size"] = strconv.FormatInt(objectActualSize, 10)
+
+	// Update all erasure metadata, make sure to not modify fields like
+	// checksum which are different on each disks.
+	// for index := range partsMetadata {
+	// 	if partsMetadata[index].IsValid() {
+	// 		partsMetadata[index].Size = fi.Size
+	// 		partsMetadata[index].ModTime = fi.ModTime
+	// 		partsMetadata[index].Metadata = fi.Metadata
+	// 		partsMetadata[index].Parts = fi.Parts
+	// 	}
+	// }
+
+	// // Write final `xl.meta` at uploadID location
+	// if onlineDisks, err = writeUniqueFileInfo(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath, partsMetadata, writeQuorum); err != nil {
+	// 	return oi, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
+	// }
+
+	// // Remove parts that weren't present in CompleteMultipartUpload request.
+	// for _, curpart := range currentFI.Parts {
+	// 	if objectPartIndex(fi.Parts, curpart.Number) == -1 {
+	// 		// Delete the missing part files. e.g,
+	// 		// Request 1: NewMultipart
+	// 		// Request 2: PutObjectPart 1
+	// 		// Request 3: PutObjectPart 2
+	// 		// Request 4: CompleteMultipartUpload --part 2
+	// 		// N.B. 1st part is not present. This part should be removed from the storage.
+	// 		er.removeObjectPart(bucket, object, uploadID, fi.DataDir, curpart.Number)
+	// 	}
+	// }
+
+	// // Hold namespace to complete the transaction
+	// lk := er.NewNSLock(bucket, object)
+	// ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+	// if err != nil {
+	// 	return oi, err
+	// }
+	// defer lk.Unlock()
+	lk := er.NewNSLock(bucket, object)
+	ctx, err = lk.GetLock(ctx, globalDeleteOperationTimeout)
+	if err != nil {
 		return err
 	}
+	defer lk.Unlock()
+	//TODO: some validations to ensure restore-request ongoing still true and validate parts on uploadDir with the xl.meta
+	// Rename the multipart object to final location specified in fi
+	if _, err = renameData(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath,
+		currentFI.DataDir, bucket, object, writeQuorum, nil); err != nil {
+		return toObjectErr(err, bucket, object)
+	}
+	fmt.Println("----------------------after rename-----------------")
+	//TODO: update restore metadata
+	//ropts := putRestoreOpts(bucket, object, opts.Transition.RestoreRequest, oi)
+	//ropts.UserDefined[xhttp.AmzRestore] = fmt.Sprintf("ongoing-request=%t, expiry-date=%s", false, opts.Transition.RestoreExpiry.Format(http.TimeFormat))
+	//ropts.NoLock = true
+	// overwrite COpyObject metadata to restore done
 	return nil
 }
