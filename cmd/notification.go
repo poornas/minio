@@ -1282,7 +1282,7 @@ func (sys *NotificationSys) GetBucketMetrics(ctx context.Context) <-chan Metric 
 }
 
 // GetClusterMetrics - gets the cluster metrics from all nodes excluding self.
-func (sys *NotificationSys) GetClusterMetrics(ctx context.Context) <-chan Metric {
+func (sys *NotificationSys) GetClusterMetrics(ctx context.Context, opts clusterMetricsOpts) <-chan Metric {
 	if sys == nil {
 		return nil
 	}
@@ -1295,7 +1295,7 @@ func (sys *NotificationSys) GetClusterMetrics(ctx context.Context) <-chan Metric
 				return errPeerNotReachable
 			}
 			var err error
-			peerChannels[index], err = sys.peerClients[index].GetPeerMetrics(ctx)
+			peerChannels[index], err = sys.peerClients[index].GetPeerMetrics(ctx, opts)
 			return err
 		}, index)
 	}

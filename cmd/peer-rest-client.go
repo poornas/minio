@@ -852,8 +852,14 @@ func (client *peerRESTClient) MonitorBandwidth(ctx context.Context, buckets []st
 	return &bandwidthReport, err
 }
 
-func (client *peerRESTClient) GetPeerMetrics(ctx context.Context) (<-chan Metric, error) {
-	respBody, err := client.callWithContext(ctx, peerRESTMethodGetPeerMetrics, nil, nil, -1)
+func (client *peerRESTClient) GetPeerMetrics(ctx context.Context, opts clusterMetricsOpts) (<-chan Metric, error) {
+	var reader bytes.Buffer
+	err := gob.NewEncoder(&reader).Encode(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	respBody, err := client.callWithContext(ctx, peerRESTMethodGetPeerMetrics, nil, &reader, int64(reader.Len()))
 	if err != nil {
 		return nil, err
 	}

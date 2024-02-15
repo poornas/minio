@@ -25,18 +25,28 @@ import (
 )
 
 const (
-	prometheusMetricsPathLegacy               = "/prometheus/metrics"
-	prometheusMetricsV2ClusterPath            = "/v2/metrics/cluster"
-	prometheusMetricsV2BucketPath             = "/v2/metrics/bucket"
-	prometheusMetricsV2NodePath               = "/v2/metrics/node"
-	prometheusMetricsV2ResourcePath           = "/v2/metrics/resource"
-	prometheusMetricsV3APIPath                = "/v3/metrics/api"
-	prometheusMetricsV3APIObjectPath          = "/v3/metrics/api/object"
-	prometheusMetricsV3APIBucketPath          = "/v3/metrics/api/bucket"
-	prometheusMetricsV3BucketReplicationPath  = "/v3/metrics/api/bucket/replication"
-	prometheusMetricsV3NodePath               = "/v3/metrics/node"
-	prometheusMetricsV3DebugPath              = "/v3/metrics/debug"
-	prometheusMetricsV3ClusterReplicationPath = "/v3/metrics/cluster/replication"
+	prometheusMetricsPathLegacy                = "/prometheus/metrics"
+	prometheusMetricsV2ClusterPath             = "/v2/metrics/cluster"
+	prometheusMetricsV2BucketPath              = "/v2/metrics/bucket"
+	prometheusMetricsV2NodePath                = "/v2/metrics/node"
+	prometheusMetricsV2ResourcePath            = "/v2/metrics/resource"
+	prometheusMetricsV3APIPath                 = "/v3/metrics/api"
+	prometheusMetricsV3APIObjectPath           = "/v3/metrics/api/object"
+	prometheusMetricsV3APIBucketPath           = "/v3/metrics/api/bucket"
+	prometheusMetricsV3BucketReplicationPath   = "/v3/metrics/api/bucket/replication"
+	prometheusMetricsV3NodePath                = "/v3/metrics/node"
+	prometheusMetricsV3DebugPath               = "/v3/metrics/debug"
+	prometheusMetricsV3ClusterReplicationPath  = "/v3/metrics/cluster/replication"
+	prometheusMetricsV3ClusterPath             = "/v3/metrics/cluster"
+	prometheusMetricsV3ClusterIAMPath          = "/v3/metrics/cluster/iam"
+	prometheusMetricsV3ClusterAuditPath        = "/v3/metrics/cluster/audit"
+	prometheusMetricsV3ClusterESETPath         = "/v3/metrics/cluster/eset"
+	prometheusMetricsV3ClusterILMPath          = "/v3/metrics/cluster/ilm"
+	prometheusMetricsV3ClusterHealingPath      = "/v3/metrics/cluster/healing"
+	prometheusMetricsV3ClusterWebhookPath      = "/v3/metrics/cluster/webhook"
+	prometheusMetricsV3ClusterNotificationPath = "/v3/metrics/cluster/notification"
+	prometheusMetricsV3ClusterConfigPath       = "/v3/metrics/cluster/config"
+	prometheusMetricsV3ClusterScannerPath      = "/v3/metrics/cluster/scanner"
 )
 
 // Standard env prometheus auth type
@@ -71,5 +81,16 @@ func registerMetricsRouter(router *mux.Router) {
 	metricsRouter.Handle(prometheusMetricsV3APIBucketPath, auth(metricsV3APIBucketHandler()))
 	metricsRouter.Handle(prometheusMetricsV3DebugPath, auth(metricsV3DebugHandler()))
 	metricsRouter.Handle(prometheusMetricsV3BucketReplicationPath, auth(metricsV3BucketReplHandler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterReplicationPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterConfigPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterIAMPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterILMPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterESETPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterHealingPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterAuditPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterWebhookPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterScannerPath, auth(metricsClusterV3Handler()))
+	metricsRouter.Handle(prometheusMetricsV3ClusterNotificationPath, auth(metricsClusterV3Handler()))
 	metricsRouter.Handle(prometheusMetricsV3NodePath, auth(metricsNodeV3Handler()))
 }

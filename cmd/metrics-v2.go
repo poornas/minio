@@ -58,9 +58,9 @@ func init() {
 		getClusterTierMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}),
 		getClusterUsageMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}),
 		getKMSMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true, dependGlobalKMS: true}),
-		getClusterHealthMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}),
-		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}),
-		getReplicationSiteMetrics(MetricsGroupOpts{dependGlobalSiteReplicationSys: true}),
+		getClusterHealthMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}, clusterMetricNamespace, healthSubsys),
+		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}, nodeMetricNamespace),
+		getReplicationSiteMetrics(MetricsGroupOpts{dependGlobalSiteReplicationSys: true}, clusterMetricNamespace),
 		getBatchJobsMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}),
 	}
 
@@ -72,9 +72,9 @@ func init() {
 		getMinioVersionMetrics(),
 		getNetworkMetrics(MetricsGroupOpts{}, s3MetricNamespace),
 		getS3TTFBMetric(s3MetricNamespace),
-		getILMNodeMetrics(),
-		getScannerNodeMetrics(),
-		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}),
+		getILMNodeMetrics(nodeMetricNamespace),
+		getScannerNodeMetrics(nodeMetricNamespace),
+		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}, nodeMetricNamespace),
 		getKMSNodeMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true, dependGlobalKMS: true}),
 		getMinioHealingMetrics(MetricsGroupOpts{dependGlobalBackgroundHealState: true}),
 		getWebhookMetrics(),
@@ -96,7 +96,7 @@ func init() {
 		getTierMetrics(),
 		getNotificationMetrics(MetricsGroupOpts{dependGlobalLambdaTargetList: true}),
 		getDistLockMetrics(MetricsGroupOpts{dependGlobalIsDistErasure: true, dependGlobalLockServer: true}),
-		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}),
+		getIAMNodeMetrics(MetricsGroupOpts{dependGlobalAuthNPlugin: true, dependGlobalIAMSys: true}, nodeMetricNamespace),
 		getLocalStorageMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true}),
 		getReplicationNodeMetrics(MetricsGroupOpts{dependGlobalObjectAPI: true, dependBucketTargetSys: true}, nodeMetricNamespace),
 	}
@@ -168,6 +168,7 @@ const (
 	lambdaSubsystem           MetricSubsystem = "lambda"
 	auditSubsystem            MetricSubsystem = "audit"
 	webhookSubsystem          MetricSubsystem = "webhook"
+	healthSubsys              MetricSubsystem = "health"
 )
 
 // MetricName are the individual names for the metric.
@@ -350,6 +351,7 @@ type MetricsGroupOpts struct {
 	dependBucketTargetSys           bool
 	ioStatsOnly                     bool
 	replicationOnlyV3               bool
+	v3Opts                          clusterMetricsOpts
 }
 
 // RegisterRead register the metrics populator function to be used
@@ -1904,9 +1906,9 @@ func getTierMetrics() *MetricsGroup {
 	return mg
 }
 
-func getTransitionPendingTasksMD() MetricDescription {
+func getTransitionPendingTasksMD(ns MetricNamespace) MetricDescription {
 	return MetricDescription{
-		Namespace: nodeMetricNamespace,
+		Namespace: ns,
 		Subsystem: ilmSubsystem,
 		Name:      transitionPendingTasks,
 		Help:      "Number of pending ILM transition tasks in the queue",
@@ -1914,9 +1916,9 @@ func getTransitionPendingTasksMD() MetricDescription {
 	}
 }
 
-func getTransitionActiveTasksMD() MetricDescription {
+func getTransitionActiveTasksMD(ns MetricNamespace) MetricDescription {
 	return MetricDescription{
-		Namespace: nodeMetricNamespace,
+		Namespace: ns,
 		Subsystem: ilmSubsystem,
 		Name:      transitionActiveTasks,
 		Help:      "Number of active ILM transition tasks",
@@ -1924,9 +1926,9 @@ func getTransitionActiveTasksMD() MetricDescription {
 	}
 }
 
-func getTransitionMissedTasksMD() MetricDescription {
+func getTransitionMissedTasksMD(ns MetricNamespace) MetricDescription {
 	return MetricDescription{
-		Namespace: nodeMetricNamespace,
+		Namespace: ns,
 		Subsystem: ilmSubsystem,
 		Name:      transitionMissedTasks,
 		Help:      "Number of missed immediate ILM transition tasks",
@@ -1934,9 +1936,9 @@ func getTransitionMissedTasksMD() MetricDescription {
 	}
 }
 
-func getExpiryPendingTasksMD() MetricDescription {
+func getExpiryPendingTasksMD(ns MetricNamespace) MetricDescription {
 	return MetricDescription{
-		Namespace: nodeMetricNamespace,
+		Namespace: ns,
 		Subsystem: ilmSubsystem,
 		Name:      expiryPendingTasks,
 		Help:      "Number of pending ILM expiry tasks in the queue",
@@ -1994,22 +1996,22 @@ func getBucketS3RequestsCanceledMD(ns MetricNamespace) MetricDescription {
 	}
 }
 
-func getILMNodeMetrics() *MetricsGroup {
+func getILMNodeMetrics(ns MetricNamespace) *MetricsGroup {
 	mg := &MetricsGroup{
 		cacheInterval: 10 * time.Second,
 	}
 	mg.RegisterRead(func(_ context.Context) []Metric {
 		expPendingTasks := Metric{
-			Description: getExpiryPendingTasksMD(),
+			Description: getExpiryPendingTasksMD(ns),
 		}
 		trPendingTasks := Metric{
-			Description: getTransitionPendingTasksMD(),
+			Description: getTransitionPendingTasksMD(ns),
 		}
 		trActiveTasks := Metric{
-			Description: getTransitionActiveTasksMD(),
+			Description: getTransitionActiveTasksMD(ns),
 		}
 		trMissedTasks := Metric{
-			Description: getTransitionMissedTasksMD(),
+			Description: getTransitionMissedTasksMD(ns),
 		}
 		if globalExpiryState != nil {
 			expPendingTasks.Value = float64(globalExpiryState.PendingTasks())
@@ -2029,7 +2031,7 @@ func getILMNodeMetrics() *MetricsGroup {
 	return mg
 }
 
-func getScannerNodeMetrics() *MetricsGroup {
+func getScannerNodeMetrics(ns MetricNamespace) *MetricsGroup {
 	mg := &MetricsGroup{
 		cacheInterval: 10 * time.Second,
 	}
@@ -2037,7 +2039,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 		metrics := []Metric{
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: scannerSubsystem,
 					Name:      "objects_scanned",
 					Help:      "Total number of unique objects scanned since server start",
@@ -2047,7 +2049,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: scannerSubsystem,
 					Name:      "versions_scanned",
 					Help:      "Total number of object versions scanned since server start",
@@ -2057,7 +2059,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: scannerSubsystem,
 					Name:      "directories_scanned",
 					Help:      "Total number of directories scanned since server start",
@@ -2067,7 +2069,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: scannerSubsystem,
 					Name:      "bucket_scans_started",
 					Help:      "Total number of bucket scans started since server start",
@@ -2077,7 +2079,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: scannerSubsystem,
 					Name:      "bucket_scans_finished",
 					Help:      "Total number of bucket scans finished since server start",
@@ -2087,7 +2089,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: ilmSubsystem,
 					Name:      "versions_scanned",
 					Help:      "Total number of object versions checked for ilm actions since server start",
@@ -2104,7 +2106,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 			}
 			metrics = append(metrics, Metric{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: ilmSubsystem,
 					Name:      MetricName("action_count_" + toSnake(action.String())),
 					Help:      "Total action outcome of lifecycle checks since server start",
@@ -2118,7 +2120,7 @@ func getScannerNodeMetrics() *MetricsGroup {
 	return mg
 }
 
-func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
+func getIAMNodeMetrics(opts MetricsGroupOpts, ns MetricNamespace) *MetricsGroup {
 	mg := &MetricsGroup{
 		cacheInterval:    10 * time.Second,
 		metricsGroupOpts: opts,
@@ -2134,7 +2136,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 		metrics = []Metric{
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "last_sync_duration_millis",
 					Help:      "Last successful IAM data sync duration in milliseconds",
@@ -2144,7 +2146,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "since_last_sync_millis",
 					Help:      "Time (in milliseconds) since last successful IAM data sync.",
@@ -2154,7 +2156,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "sync_successes",
 					Help:      "Number of successful IAM data syncs since server start.",
@@ -2164,7 +2166,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "sync_failures",
 					Help:      "Number of failed IAM data syncs since server start.",
@@ -2174,7 +2176,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_last_succ_seconds",
 					Help:      "When plugin authentication is configured, returns time (in seconds) since the last successful request to the service",
@@ -2184,7 +2186,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_last_fail_seconds",
 					Help:      "When plugin authentication is configured, returns time (in seconds) since the last failed request to the service",
@@ -2194,7 +2196,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_total_requests_minute",
 					Help:      "When plugin authentication is configured, returns total requests count in the last full minute",
@@ -2204,7 +2206,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_failed_requests_minute",
 					Help:      "When plugin authentication is configured, returns failed requests count in the last full minute",
@@ -2214,7 +2216,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_succ_avg_rtt_ms_minute",
 					Help:      "When plugin authentication is configured, returns average round-trip-time of successful requests in the last full minute",
@@ -2224,7 +2226,7 @@ func getIAMNodeMetrics(opts MetricsGroupOpts) *MetricsGroup {
 			},
 			{
 				Description: MetricDescription{
-					Namespace: nodeMetricNamespace,
+					Namespace: ns,
 					Subsystem: iamSubsystem,
 					Name:      "plugin_authn_service_succ_max_rtt_ms_minute",
 					Help:      "When plugin authentication is configured, returns maximum round-trip-time of successful requests in the last full minute",
@@ -2409,7 +2411,7 @@ func getReplicationNodeMetrics(opts MetricsGroupOpts, ns MetricNamespace) *Metri
 }
 
 // replication metrics for site replication
-func getReplicationSiteMetrics(opts MetricsGroupOpts) *MetricsGroup {
+func getReplicationSiteMetrics(opts MetricsGroupOpts, ns MetricNamespace) *MetricsGroup {
 	mg := &MetricsGroup{
 		cacheInterval:    1 * time.Minute,
 		metricsGroupOpts: opts,
@@ -2425,103 +2427,103 @@ func getReplicationSiteMetrics(opts MetricsGroupOpts) *MetricsGroup {
 				return ml
 			}
 			ml = append(ml, Metric{
-				Description: getRepReceivedBytesMD(clusterMetricNamespace),
+				Description: getRepReceivedBytesMD(ns),
 				Value:       float64(m.ReplicaSize),
 			})
 			ml = append(ml, Metric{
-				Description: getRepReceivedOperationsMD(clusterMetricNamespace),
+				Description: getRepReceivedOperationsMD(ns),
 				Value:       float64(m.ReplicaCount),
 			})
 
 			for _, stat := range m.Metrics {
 				ml = append(ml, Metric{
-					Description:    getRepFailedBytesLastMinuteMD(clusterMetricNamespace),
+					Description:    getRepFailedBytesLastMinuteMD(ns),
 					Value:          float64(stat.Failed.LastMinute.Bytes),
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepFailedOperationsLastMinuteMD(clusterMetricNamespace),
+					Description:    getRepFailedOperationsLastMinuteMD(ns),
 					Value:          stat.Failed.LastMinute.Count,
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepFailedBytesLastHourMD(clusterMetricNamespace),
+					Description:    getRepFailedBytesLastHourMD(ns),
 					Value:          float64(stat.Failed.LastHour.Bytes),
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepFailedOperationsLastHourMD(clusterMetricNamespace),
+					Description:    getRepFailedOperationsLastHourMD(ns),
 					Value:          stat.Failed.LastHour.Count,
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepFailedBytesTotalMD(clusterMetricNamespace),
+					Description:    getRepFailedBytesTotalMD(ns),
 					Value:          float64(stat.Failed.Totals.Bytes),
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepFailedOperationsTotalMD(clusterMetricNamespace),
+					Description:    getRepFailedOperationsTotalMD(ns),
 					Value:          stat.Failed.Totals.Count,
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 
 				ml = append(ml, Metric{
-					Description:    getRepSentBytesMD(clusterMetricNamespace),
+					Description:    getRepSentBytesMD(ns),
 					Value:          float64(stat.ReplicatedSize),
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 				ml = append(ml, Metric{
-					Description:    getRepSentOperationsMD(clusterMetricNamespace),
+					Description:    getRepSentOperationsMD(ns),
 					Value:          float64(stat.ReplicatedCount),
 					VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 				})
 
 				if c, ok := stat.Failed.ErrCounts["AccessDenied"]; ok {
 					ml = append(ml, Metric{
-						Description:    getClusterRepCredentialErrorsMD(clusterMetricNamespace),
+						Description:    getClusterRepCredentialErrorsMD(ns),
 						Value:          float64(c),
 						VariableLabels: map[string]string{"endpoint": stat.Endpoint},
 					})
 				}
 			}
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedGetOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedGetOperationsMD(ns),
 				Value:       float64(m.Proxied.GetTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedHeadOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedHeadOperationsMD(ns),
 				Value:       float64(m.Proxied.HeadTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedPutTaggingOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedPutTaggingOperationsMD(ns),
 				Value:       float64(m.Proxied.PutTagTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedGetTaggingOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedGetTaggingOperationsMD(ns),
 				Value:       float64(m.Proxied.GetTagTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedRmvTaggingOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedRmvTaggingOperationsMD(ns),
 				Value:       float64(m.Proxied.RmvTagTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedGetFailedOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedGetFailedOperationsMD(ns),
 				Value:       float64(m.Proxied.GetFailedTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedHeadFailedOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedHeadFailedOperationsMD(ns),
 				Value:       float64(m.Proxied.HeadFailedTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedPutTaggingFailedOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedPutTaggingFailedOperationsMD(ns),
 				Value:       float64(m.Proxied.PutTagFailedTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedGetTaggingFailedOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedGetTaggingFailedOperationsMD(ns),
 				Value:       float64(m.Proxied.GetTagFailedTotal),
 			})
 			ml = append(ml, Metric{
-				Description: getClusterReplProxiedRmvTaggingFailedOperationsMD(clusterMetricNamespace),
+				Description: getClusterReplProxiedRmvTaggingFailedOperationsMD(ns),
 				Value:       float64(m.Proxied.RmvTagFailedTotal),
 			})
 		}
@@ -2696,169 +2698,172 @@ func getNotificationMetrics(opts MetricsGroupOpts) *MetricsGroup {
 	}
 	mg.RegisterRead(func(ctx context.Context) []Metric {
 		metrics := make([]Metric, 0, 3)
+		if opts.v3Opts.Empty() || opts.v3Opts.IsNotifyMetrics {
+			if globalEventNotifier != nil {
+				nstats := globalEventNotifier.targetList.Stats()
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: notifySubsystem,
+						Name:      "current_send_in_progress",
+						Help:      "Number of concurrent async Send calls active to all targets (deprecated, please use 'minio_notify_target_current_send_in_progress' instead)",
+						Type:      gaugeMetric,
+					},
+					Value: float64(nstats.CurrentSendCalls),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: notifySubsystem,
+						Name:      "events_skipped_total",
+						Help:      "Events that were skipped to be sent to the targets due to the in-memory queue being full",
+						Type:      counterMetric,
+					},
+					Value: float64(nstats.EventsSkipped),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: notifySubsystem,
+						Name:      "events_errors_total",
+						Help:      "Events that were failed to be sent to the targets (deprecated, please use 'minio_notify_target_failed_events' instead)",
+						Type:      counterMetric,
+					},
+					Value: float64(nstats.EventsErrorsTotal),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: notifySubsystem,
+						Name:      "events_sent_total",
+						Help:      "Total number of events sent to the targets (deprecated, please use 'minio_notify_target_total_events' instead)",
+						Type:      counterMetric,
+					},
+					Value: float64(nstats.TotalEvents),
+				})
+				for id, st := range nstats.TargetStats {
+					metrics = append(metrics, Metric{
+						Description: MetricDescription{
+							Namespace: minioNamespace,
+							Subsystem: notifySubsystem,
+							Name:      "target_total_events",
+							Help:      "Total number of events sent (or) queued to the target",
+							Type:      counterMetric,
+						},
+						VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
+						Value:          float64(st.TotalEvents),
+					})
+					metrics = append(metrics, Metric{
+						Description: MetricDescription{
+							Namespace: minioNamespace,
+							Subsystem: notifySubsystem,
+							Name:      "target_failed_events",
+							Help:      "Number of events failed to be sent (or) queued to the target",
+							Type:      counterMetric,
+						},
+						VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
+						Value:          float64(st.FailedEvents),
+					})
+					metrics = append(metrics, Metric{
+						Description: MetricDescription{
+							Namespace: minioNamespace,
+							Subsystem: notifySubsystem,
+							Name:      "target_current_send_in_progress",
+							Help:      "Number of concurrent async Send calls active to the target",
+							Type:      gaugeMetric,
+						},
+						VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
+						Value:          float64(st.CurrentSendCalls),
+					})
+					metrics = append(metrics, Metric{
+						Description: MetricDescription{
+							Namespace: minioNamespace,
+							Subsystem: notifySubsystem,
+							Name:      "target_queue_length",
+							Help:      "Number of events currently staged in the queue_dir configured for the target",
+							Type:      gaugeMetric,
+						},
+						VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
+						Value:          float64(st.CurrentQueue),
+					})
+				}
+			}
 
-		if globalEventNotifier != nil {
-			nstats := globalEventNotifier.targetList.Stats()
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: notifySubsystem,
-					Name:      "current_send_in_progress",
-					Help:      "Number of concurrent async Send calls active to all targets (deprecated, please use 'minio_notify_target_current_send_in_progress' instead)",
-					Type:      gaugeMetric,
-				},
-				Value: float64(nstats.CurrentSendCalls),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: notifySubsystem,
-					Name:      "events_skipped_total",
-					Help:      "Events that were skipped to be sent to the targets due to the in-memory queue being full",
-					Type:      counterMetric,
-				},
-				Value: float64(nstats.EventsSkipped),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: notifySubsystem,
-					Name:      "events_errors_total",
-					Help:      "Events that were failed to be sent to the targets (deprecated, please use 'minio_notify_target_failed_events' instead)",
-					Type:      counterMetric,
-				},
-				Value: float64(nstats.EventsErrorsTotal),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: notifySubsystem,
-					Name:      "events_sent_total",
-					Help:      "Total number of events sent to the targets (deprecated, please use 'minio_notify_target_total_events' instead)",
-					Type:      counterMetric,
-				},
-				Value: float64(nstats.TotalEvents),
-			})
-			for id, st := range nstats.TargetStats {
+			lstats := globalLambdaTargetList.Stats()
+			for _, st := range lstats.TargetStats {
 				metrics = append(metrics, Metric{
 					Description: MetricDescription{
 						Namespace: minioNamespace,
-						Subsystem: notifySubsystem,
-						Name:      "target_total_events",
-						Help:      "Total number of events sent (or) queued to the target",
+						Subsystem: lambdaSubsystem,
+						Name:      "active_requests",
+						Help:      "Number of in progress requests",
+					},
+					VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
+					Value:          float64(st.ActiveRequests),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: lambdaSubsystem,
+						Name:      "total_requests",
+						Help:      "Total number of requests sent since start",
 						Type:      counterMetric,
 					},
-					VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
-					Value:          float64(st.TotalEvents),
+					VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
+					Value:          float64(st.TotalRequests),
 				})
 				metrics = append(metrics, Metric{
 					Description: MetricDescription{
 						Namespace: minioNamespace,
-						Subsystem: notifySubsystem,
-						Name:      "target_failed_events",
-						Help:      "Number of events failed to be sent (or) queued to the target",
+						Subsystem: lambdaSubsystem,
+						Name:      "failed_requests",
+						Help:      "Total number of requests that failed to send since start",
 						Type:      counterMetric,
 					},
-					VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
-					Value:          float64(st.FailedEvents),
-				})
-				metrics = append(metrics, Metric{
-					Description: MetricDescription{
-						Namespace: minioNamespace,
-						Subsystem: notifySubsystem,
-						Name:      "target_current_send_in_progress",
-						Help:      "Number of concurrent async Send calls active to the target",
-						Type:      gaugeMetric,
-					},
-					VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
-					Value:          float64(st.CurrentSendCalls),
-				})
-				metrics = append(metrics, Metric{
-					Description: MetricDescription{
-						Namespace: minioNamespace,
-						Subsystem: notifySubsystem,
-						Name:      "target_queue_length",
-						Help:      "Number of events currently staged in the queue_dir configured for the target",
-						Type:      gaugeMetric,
-					},
-					VariableLabels: map[string]string{"target_id": id.ID, "target_name": id.Name},
-					Value:          float64(st.CurrentQueue),
+					VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
+					Value:          float64(st.FailedRequests),
 				})
 			}
 		}
+		if opts.v3Opts.Empty() || opts.v3Opts.IsAuditMetrics {
 
-		lstats := globalLambdaTargetList.Stats()
-		for _, st := range lstats.TargetStats {
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: lambdaSubsystem,
-					Name:      "active_requests",
-					Help:      "Number of in progress requests",
-				},
-				VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
-				Value:          float64(st.ActiveRequests),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: lambdaSubsystem,
-					Name:      "total_requests",
-					Help:      "Total number of requests sent since start",
-					Type:      counterMetric,
-				},
-				VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
-				Value:          float64(st.TotalRequests),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: lambdaSubsystem,
-					Name:      "failed_requests",
-					Help:      "Total number of requests that failed to send since start",
-					Type:      counterMetric,
-				},
-				VariableLabels: map[string]string{"target_id": st.ID.ID, "target_name": st.ID.Name},
-				Value:          float64(st.FailedRequests),
-			})
-		}
-
-		// Audit and system:
-		audit := logger.CurrentStats()
-		for id, st := range audit {
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: auditSubsystem,
-					Name:      "target_queue_length",
-					Help:      "Number of unsent messages in queue for target",
-					Type:      gaugeMetric,
-				},
-				VariableLabels: map[string]string{"target_id": id},
-				Value:          float64(st.QueueLength),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: auditSubsystem,
-					Name:      "total_messages",
-					Help:      "Total number of messages sent since start",
-					Type:      counterMetric,
-				},
-				VariableLabels: map[string]string{"target_id": id},
-				Value:          float64(st.TotalMessages),
-			})
-			metrics = append(metrics, Metric{
-				Description: MetricDescription{
-					Namespace: minioNamespace,
-					Subsystem: auditSubsystem,
-					Name:      "failed_messages",
-					Help:      "Total number of messages that failed to send since start",
-					Type:      counterMetric,
-				},
-				VariableLabels: map[string]string{"target_id": id},
-				Value:          float64(st.FailedMessages),
-			})
+			// Audit and system:
+			audit := logger.CurrentStats()
+			for id, st := range audit {
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: auditSubsystem,
+						Name:      "target_queue_length",
+						Help:      "Number of unsent messages in queue for target",
+						Type:      gaugeMetric,
+					},
+					VariableLabels: map[string]string{"target_id": id},
+					Value:          float64(st.QueueLength),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: auditSubsystem,
+						Name:      "total_messages",
+						Help:      "Total number of messages sent since start",
+						Type:      counterMetric,
+					},
+					VariableLabels: map[string]string{"target_id": id},
+					Value:          float64(st.TotalMessages),
+				})
+				metrics = append(metrics, Metric{
+					Description: MetricDescription{
+						Namespace: minioNamespace,
+						Subsystem: auditSubsystem,
+						Name:      "failed_messages",
+						Help:      "Total number of messages that failed to send since start",
+						Type:      counterMetric,
+					},
+					VariableLabels: map[string]string{"target_id": id},
+					Value:          float64(st.FailedMessages),
+				})
+			}
 		}
 		return metrics
 	})
@@ -3527,7 +3532,7 @@ func getLocalStorageMetrics(opts MetricsGroupOpts) *MetricsGroup {
 	return mg
 }
 
-func getClusterWriteQuorumMD() MetricDescription {
+func getClusterWriteQuorumMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
 		Subsystem: "write",
@@ -3537,47 +3542,47 @@ func getClusterWriteQuorumMD() MetricDescription {
 	}
 }
 
-func getClusterHealthStatusMD() MetricDescription {
+func getClusterHealthStatusMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
-		Namespace: clusterMetricNamespace,
-		Subsystem: "health",
+		Namespace: ns,
+		Subsystem: sub,
 		Name:      "status",
 		Help:      "Get current cluster health status",
 		Type:      gaugeMetric,
 	}
 }
 
-func getClusterErasureSetHealthStatusMD() MetricDescription {
+func getClusterErasureSetHealthStatusMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
-		Namespace: clusterMetricNamespace,
-		Subsystem: "health",
+		Namespace: ns,
+		Subsystem: sub,
 		Name:      "erasure_set_status",
 		Help:      "Get current health status for this erasure set",
 		Type:      gaugeMetric,
 	}
 }
 
-func getClusterErasureSetReadQuorumMD() MetricDescription {
+func getClusterErasureSetReadQuorumMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
-		Namespace: clusterMetricNamespace,
-		Subsystem: "health",
+		Namespace: ns,
+		Subsystem: sub,
 		Name:      "erasure_set_read_quorum",
 		Help:      "Get the read quorum for this erasure set",
 		Type:      gaugeMetric,
 	}
 }
 
-func getClusterErasureSetWriteQuorumMD() MetricDescription {
+func getClusterErasureSetWriteQuorumMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
-		Namespace: clusterMetricNamespace,
-		Subsystem: "health",
+		Namespace: ns,
+		Subsystem: sub,
 		Name:      "erasure_set_write_quorum",
 		Help:      "Get the write quorum for this erasure set",
 		Type:      gaugeMetric,
 	}
 }
 
-func getClusterErasureSetOnlineDrivesMD() MetricDescription {
+func getClusterErasureSetOnlineDrivesMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
 		Subsystem: "health",
@@ -3587,7 +3592,7 @@ func getClusterErasureSetOnlineDrivesMD() MetricDescription {
 	}
 }
 
-func getClusterErasureSetHealingDrivesMD() MetricDescription {
+func getClusterErasureSetHealingDrivesMD(ns MetricNamespace, sub MetricSubsystem) MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
 		Subsystem: "health",
@@ -3597,7 +3602,7 @@ func getClusterErasureSetHealingDrivesMD() MetricDescription {
 	}
 }
 
-func getClusterHealthMetrics(opts MetricsGroupOpts) *MetricsGroup {
+func getClusterHealthMetrics(opts MetricsGroupOpts, ns MetricNamespace, sub MetricSubsystem) *MetricsGroup {
 	mg := &MetricsGroup{
 		cacheInterval:    10 * time.Second,
 		metricsGroupOpts: opts,
@@ -3605,62 +3610,64 @@ func getClusterHealthMetrics(opts MetricsGroupOpts) *MetricsGroup {
 	mg.RegisterRead(func(ctx context.Context) (metrics []Metric) {
 		objLayer := newObjectLayerFn()
 
-		opts := HealthOptions{}
-		result := objLayer.Health(ctx, opts)
+		o := HealthOptions{}
+		result := objLayer.Health(ctx, o)
 
 		metrics = make([]Metric, 0, 2+4*len(result.ESHealth))
-
-		metrics = append(metrics, Metric{
-			Description: getClusterWriteQuorumMD(),
-			Value:       float64(result.WriteQuorum),
-		})
-
+		if opts.v3Opts.Empty() || opts.v3Opts.IsConfigMetrics {
+			metrics = append(metrics, Metric{
+				Description: getClusterWriteQuorumMD(ns, sub),
+				Value:       float64(result.WriteQuorum),
+			})
+		}
 		health := 1
 		if !result.Healthy {
 			health = 0
 		}
 
 		metrics = append(metrics, Metric{
-			Description: getClusterHealthStatusMD(),
+			Description: getClusterHealthStatusMD(ns, sub),
 			Value:       float64(health),
 		})
-
 		for _, h := range result.ESHealth {
 			labels := map[string]string{
 				"pool": strconv.Itoa(h.PoolID),
 				"set":  strconv.Itoa(h.SetID),
 			}
-			metrics = append(metrics, Metric{
-				Description:    getClusterErasureSetReadQuorumMD(),
-				VariableLabels: labels,
-				Value:          float64(h.ReadQuorum),
-			})
-			metrics = append(metrics, Metric{
-				Description:    getClusterErasureSetWriteQuorumMD(),
-				VariableLabels: labels,
-				Value:          float64(h.WriteQuorum),
-			})
-			metrics = append(metrics, Metric{
-				Description:    getClusterErasureSetOnlineDrivesMD(),
-				VariableLabels: labels,
-				Value:          float64(h.HealthyDrives),
-			})
-			metrics = append(metrics, Metric{
-				Description:    getClusterErasureSetHealingDrivesMD(),
-				VariableLabels: labels,
-				Value:          float64(h.HealingDrives),
-			})
+			if opts.v3Opts.Empty() || opts.v3Opts.IsESETMetrics {
+				metrics = append(metrics, Metric{
+					Description:    getClusterErasureSetReadQuorumMD(ns, sub),
+					VariableLabels: labels,
+					Value:          float64(h.ReadQuorum),
+				})
+				metrics = append(metrics, Metric{
+					Description:    getClusterErasureSetWriteQuorumMD(ns, sub),
+					VariableLabels: labels,
+					Value:          float64(h.WriteQuorum),
+				})
+				metrics = append(metrics, Metric{
+					Description:    getClusterErasureSetOnlineDrivesMD(ns, sub),
+					VariableLabels: labels,
+					Value:          float64(h.HealthyDrives),
+				})
+				metrics = append(metrics, Metric{
+					Description:    getClusterErasureSetHealingDrivesMD(ns, sub),
+					VariableLabels: labels,
+					Value:          float64(h.HealingDrives),
+				})
+			}
 
 			health := 1
 			if !h.Healthy {
 				health = 0
 			}
-
-			metrics = append(metrics, Metric{
-				Description:    getClusterErasureSetHealthStatusMD(),
-				VariableLabels: labels,
-				Value:          float64(health),
-			})
+			if opts.v3Opts.Empty() || opts.v3Opts.IsClusterMetrics {
+				metrics = append(metrics, Metric{
+					Description:    getClusterErasureSetHealthStatusMD(ns, sub),
+					VariableLabels: labels,
+					Value:          float64(health),
+				})
+			}
 		}
 
 		return
@@ -4063,11 +4070,12 @@ func (c *minioClusterCollector) Collect(out chan<- prometheus.Metric) {
 			collectMetric(metric, labels, values, "cluster", out)
 		}
 	}
-
+	//todo: set opts
+	var opts clusterMetricsOpts
 	// Call peer api to fetch metrics
 	wg.Add(2)
 	go publish(ReportMetrics(GlobalContext, c.metricsGroups))
-	go publish(globalNotificationSys.GetClusterMetrics(GlobalContext))
+	go publish(globalNotificationSys.GetClusterMetrics(GlobalContext, opts))
 	wg.Wait()
 }
 

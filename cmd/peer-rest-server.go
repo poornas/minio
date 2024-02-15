@@ -1188,10 +1188,15 @@ func (s *peerRESTServer) GetPeerMetrics(w http.ResponseWriter, r *http.Request) 
 		s.writeErrorResponse(w, errors.New("invalid request"))
 		return
 	}
+	var opts clusterMetricsOpts
+	err := gob.NewDecoder(r.Body).Decode(&opts)
+	if err != nil && err != io.EOF {
+		s.writeErrorResponse(w, err)
+		return
+	}
 
 	enc := gob.NewEncoder(w)
-
-	for m := range ReportMetrics(r.Context(), peerMetricsGroups) {
+	for m := range ReportMetrics(r.Context(), getMetricsGroups(opts)) {
 		if err := enc.Encode(m); err != nil {
 			s.writeErrorResponse(w, errors.New("Encoding metric failed: "+err.Error()))
 			return

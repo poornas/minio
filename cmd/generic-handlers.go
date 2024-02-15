@@ -238,6 +238,17 @@ func guessIsMetricsReq(req *http.Request) bool {
 		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3APIObjectPath ||
 		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3APIBucketPath ||
 		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3BucketReplicationPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterReplicationPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterAuditPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterConfigPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterESETPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterILMPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterHealingPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterWebhookPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterNotificationPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterIAMPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterPath ||
+		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3ClusterScannerPath ||
 		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3NodePath ||
 		req.URL.Path == minioReservedBucketPath+prometheusMetricsV3DebugPath
 }
