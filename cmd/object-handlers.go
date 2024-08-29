@@ -1788,7 +1788,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 		return
 	}
-	if rs := r.Header.Get(xhttp.AmzBucketReplicationStatus); rs != "" {
+	if rs := r.Header.Get(xhttp.AmzBucketReplicationStatus); rs != "" && rs != string(replication.ReplicaEdge) {
 		srcInfo.UserDefined[ReservedMetadataPrefixLower+ReplicaStatus] = replication.Replica.String()
 		srcInfo.UserDefined[ReservedMetadataPrefixLower+ReplicaTimestamp] = UTCNow().Format(time.RFC3339Nano)
 		srcInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = rs
@@ -2304,9 +2304,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 			}
 		}
 	}
-	if dsc := mustReplicate(ctx, bucket, object, getMustReplicateOptions(metadata, "", "", replication.ObjectReplicationType, opts)); dsc.ReplicateAny() {
+	fmt.Println(".........obj uploaded....", object, objInfo)
+	dsc := mustReplicate(ctx, bucket, object, getMustReplicateOptions(metadata, "", "", replication.ObjectReplicationType, opts))
+	if dsc.ReplicateAny() {
+		fmt.Println("schedule replication...........", dsc)
 		scheduleReplication(ctx, objInfo, objectAPI, dsc, replication.ObjectReplicationType)
 	}
+	fmt.Println(".........dsc==>....", dsc, object, objInfo.ReplicationStatus)
 
 	setPutObjHeaders(w, objInfo, false, r.Header)
 

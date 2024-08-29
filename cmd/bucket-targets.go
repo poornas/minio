@@ -662,6 +662,7 @@ func (sys *BucketTargetSys) getRemoteTargetClient(tcfg *madmin.BucketTarget) (*T
 		ResetID:             tcfg.ResetID,
 		Endpoint:            tcfg.Endpoint,
 		Secure:              tcfg.Secure,
+		edge:                tcfg.Edge,
 	}
 	return tc, nil
 }
@@ -766,4 +767,5 @@ type TargetClient struct {
 	ResetID             string
 	Endpoint            string
 	Secure              bool
+	edge                bool // replication is from edge to central
 }

@@ -236,6 +236,8 @@ const (
 	// Header indicates the actual replicated object size
 	// In case of SSEC objects getting replicated (multipart) actual size would be needed at target
 	MinIOReplicationActualObjectSize = "X-Minio-Replication-Actual-Object-Size"
+	// Header indicates ilm expiry ignores replication status
+	MinioLifecycleExpiryIgnoreReplication = "X-Minio-Lifecycle-Expire-Ignore-Replication"
 
 	// predicted date/time of transition
 	MinIOTransition            = "X-Minio-Transition"

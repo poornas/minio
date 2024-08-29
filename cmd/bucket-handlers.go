@@ -486,6 +486,7 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 		gerr           error
 	)
 	replicateDeletes := hasReplicationRules(ctx, bucket, deleteObjectsReq.Objects)
+	fmt.Println("replicateDeletes", replicateDeletes)
 	if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
 		hasLockEnabled = true
 	}
@@ -682,8 +683,10 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 				Bucket:        bucket,
 				EventType:     ReplicateIncomingDelete,
 			}
+			fmt.Println("schedule replication delete", dv, dobj.DeleteMarkerReplicationStatus(), replicateDeletes)
 			scheduleReplicationDelete(ctx, dv, objectAPI)
 		}
+		fmt.Println("schedule replication delete>>>>????", dobj, dobj.DeleteMarkerReplicationStatus(), replicateDeletes)
 
 		eventName := event.ObjectRemovedDelete
 		objInfo := ObjectInfo{

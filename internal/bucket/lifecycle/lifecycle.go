@@ -100,9 +100,10 @@ func (a Action) Delete() bool {
 
 // Lifecycle - Configuration for bucket lifecycle.
 type Lifecycle struct {
-	XMLName         xml.Name   `xml:"LifecycleConfiguration"`
-	Rules           []Rule     `xml:"Rule"`
-	ExpiryUpdatedAt *time.Time `xml:"ExpiryUpdatedAt,omitempty"`
+	XMLName                 xml.Name   `xml:"LifecycleConfiguration"`
+	Rules                   []Rule     `xml:"Rule"`
+	ExpiryUpdatedAt         *time.Time `xml:"ExpiryUpdatedAt,omitempty"`
+	ExpireIgnoreReplication *string    `xml:"ExpireIgnoreReplication,omitempty"` // true by default; false if expiry needs to wait for replication
 }
 
 // HasTransition returns 'true' if lifecycle document has Transition enabled.
@@ -157,6 +158,13 @@ func (lc *Lifecycle) UnmarshalXML(d *xml.Decoder, start xml.StartElement) (err e
 					return err
 				}
 				lc.ExpiryUpdatedAt = &t
+			case "ExpireIgnoreReplication":
+				var s string
+				if err = d.DecodeElement(&s, &start); err != nil {
+					return err
+				}
+				lc.ExpireIgnoreReplication = &s
+
 			default:
 				return xml.UnmarshalError(fmt.Sprintf("expected element type <Rule> but have <%s>", se.Name.Local))
 			}

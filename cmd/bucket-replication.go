@@ -682,13 +682,17 @@ func replicateDeleteToTarget(ctx context.Context, dobj DeletedObjectReplicationI
 			}
 		}
 	}
+	status := minio.ReplicationStatusReplica
+	if tgt.edge { // if edge replication, set replication status as edge
+		status = minio.ReplicationStatusReplicaEdge
+	}
 	rmErr := tgt.RemoveObject(ctx, tgt.Bucket, dobj.ObjectName, minio.RemoveObjectOptions{
 		VersionID: versionID,
 		Internal: minio.AdvancedRemoveOptions{
 			ReplicationDeleteMarker: dobj.DeleteMarkerVersionID != "",
 			ReplicationMTime:        dobj.DeleteMarkerMTime.Time,
-			ReplicationStatus:       minio.ReplicationStatusReplica,
-			ReplicationRequest:      true, // always set this to distinguish between `mc mirror` replication and serverside
+			ReplicationStatus:       status,
+			ReplicationRequest:      true // always set this to distinguish between `mc mirror` and replication
 		},
 	})
 	if rmErr != nil {
@@ -712,7 +716,7 @@ func replicateDeleteToTarget(ctx context.Context, dobj DeletedObjectReplicationI
 	return
 }
 
-func getCopyObjMetadata(oi ObjectInfo, sc string) map[string]string {
+func getCopyObjMetadata(oi ObjectInfo, sc string, edge bool) map[string]string {
 	meta := make(map[string]string, len(oi.UserDefined))
 	for k, v := range oi.UserDefined {
 		if stringsHasPrefixFold(k, ReservedMetadataPrefixLower) {
@@ -751,7 +755,11 @@ func getCopyObjMetadata(oi ObjectInfo, sc string) map[string]string {
 
 	meta[xhttp.MinIOSourceETag] = oi.ETag
 	meta[xhttp.MinIOSourceMTime] = oi.ModTime.UTC().Format(time.RFC3339Nano)
-	meta[xhttp.AmzBucketReplicationStatus] = replication.Replica.String()
+	if edge {
+		meta[xhttp.AmzBucketReplicationStatus] = replication.ReplicaEdge.String()
+	} else {
+		meta[xhttp.AmzBucketReplicationStatus] = replication.Replica.String()
+	}
 	return meta
 }
 
@@ -775,7 +783,7 @@ func (m caseInsensitiveMap) Lookup(key string) (string, bool) {
 	return "", false
 }
 
-func putReplicationOpts(ctx context.Context, sc string, objInfo ObjectInfo, partNum int) (putOpts minio.PutObjectOptions, err error) {
+func putReplicationOpts(ctx context.Context, sc string, objInfo ObjectInfo, partNum int, edge bool) (putOpts minio.PutObjectOptions, err error) {
 	meta := make(map[string]string)
 	isSSEC := crypto.SSEC.IsEncrypted(objInfo.UserDefined)
 
@@ -814,6 +822,13 @@ func putReplicationOpts(ctx context.Context, sc string, objInfo ObjectInfo, part
 	if sc == "" && (objInfo.StorageClass == storageclass.STANDARD || objInfo.StorageClass == storageclass.RRS) {
 		sc = objInfo.StorageClass
 	}
+	st := minio.ReplicationStatusReplica
+	replReq := true
+	if edge {
+		st = ""
+		replReq = false
+	}
+
 	putOpts = minio.PutObjectOptions{
 		UserMetadata:    meta,
 		ContentType:     objInfo.ContentType,
@@ -822,10 +837,10 @@ func putReplicationOpts(ctx context.Context, sc string, objInfo ObjectInfo, part
 		StorageClass:    sc,
 		Internal: minio.AdvancedPutOptions{
 			SourceVersionID:    objInfo.VersionID,
-			ReplicationStatus:  minio.ReplicationStatusReplica,
+			ReplicationStatus:  st,
 			SourceMTime:        objInfo.ModTime,
 			SourceETag:         objInfo.ETag,
-			ReplicationRequest: true, // always set this to distinguish between `mc mirror` replication and serverside
+			ReplicationRequest: replReq, // always set this to distinguish between `mc mirror` replication and serverside
 		},
 	}
 	if objInfo.UserTags != "" {
@@ -1274,7 +1289,7 @@ func (ri ReplicateObjectInfo) replicateObject(ctx context.Context, objectAPI Obj
 	// use core client to avoid doing multipart on PUT
 	c := &minio.Core{Client: tgt.Client}
 
-	putOpts, err := putReplicationOpts(ctx, tgt.StorageClass, objInfo, 0)
+	putOpts, err := putReplicationOpts(ctx, tgt.StorageClass, objInfo, 0, tgt.edge)
 	if err != nil {
 		replLogIf(ctx, fmt.Errorf("failure setting options for replication bucket:%s err:%w", bucket, err))
 		sendEvent(eventArgs{
@@ -1544,13 +1559,13 @@ applyAction:
 				dstOpts.Internal.LegalholdTimestamp = ondiskTimestamp
 			}
 		}
-		if _, rinfo.Err = c.CopyObject(ctx, tgt.Bucket, object, tgt.Bucket, object, getCopyObjMetadata(objInfo, tgt.StorageClass), srcOpts, dstOpts); rinfo.Err != nil {
+		if _, rinfo.Err = c.CopyObject(ctx, tgt.Bucket, object, tgt.Bucket, object, getCopyObjMetadata(objInfo, tgt.StorageClass, tgt.edge), srcOpts, dstOpts); rinfo.Err != nil {
 			rinfo.ReplicationStatus = replication.Failed
 			replLogIf(ctx, fmt.Errorf("unable to replicate metadata for object %s/%s(%s) to target %s: %w", bucket, objInfo.Name, objInfo.VersionID, tgt.EndpointURL(), rinfo.Err))
 		}
 	} else {
 		var putOpts minio.PutObjectOptions
-		putOpts, err = putReplicationOpts(ctx, tgt.StorageClass, objInfo, 0)
+		putOpts, err = putReplicationOpts(ctx, tgt.StorageClass, objInfo, 0, tgt.edge)
 		if err != nil {
 			replLogIf(ctx, fmt.Errorf("failed to set replicate options for object %s/%s(%s) (target %s) err:%w", bucket, objInfo.Name, objInfo.VersionID, tgt.EndpointURL(), err))
 			sendEvent(eventArgs{
@@ -1657,7 +1672,9 @@ func replicateObjectWithMultipart(ctx context.Context, c *minio.Core, bucket, ob
 		}
 
 		cHeader := http.Header{}
-		cHeader.Add(xhttp.MinIOSourceReplicationRequest, "true")
+		if opts.Internal.ReplicationRequest { // this is by default true, except when replication is from edge.
+			cHeader.Add(xhttp.MinIOSourceReplicationRequest, "true")
+		}
 		if !isSSEC {
 			for k, v := range partInfo.Checksums {
 				cHeader.Add(k, v)
@@ -1707,7 +1724,7 @@ func replicateObjectWithMultipart(ctx context.Context, c *minio.Core, bucket, ob
 			SourceMTime: objInfo.ModTime,
 			SourceETag:  objInfo.ETag,
 			// always set this to distinguish between `mc mirror` replication and serverside
-			ReplicationRequest: true,
+			ReplicationRequest: opts.Internal.ReplicationRequest,
 		},
 	})
 	return err

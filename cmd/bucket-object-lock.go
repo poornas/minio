@@ -269,7 +269,7 @@ func checkPutObjectLockAllowed(ctx context.Context, rq *http.Request, bucket, ob
 		return mode, retainDate, legalHold, toAPIErrorCode(ctx, err)
 	}
 
-	replica := rq.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.Replica.String()
+	replica := (rq.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.Replica.String() || rq.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.ReplicaEdge.String())
 
 	if opts.VersionID != "" && !replica {
 		if objInfo, err := getObjectInfoFn(ctx, bucket, object, opts); err == nil {
