@@ -159,7 +159,7 @@ func (er erasureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, d
 
 	freeVersionID := fi.TierFreeVersionID()
 	freeVersionMarker := fi.TierFreeVersion()
-
+	fi.ReplicationState = srcInfo.ReplicationState()
 	// Update `xl.meta` content on each disks.
 	for index := range metaArr {
 		if metaArr[index].IsValid() {

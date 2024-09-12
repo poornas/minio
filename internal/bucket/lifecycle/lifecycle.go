@@ -116,6 +116,16 @@ func (lc Lifecycle) HasTransition() bool {
 	return false
 }
 
+// Clone - clones Lifecycle config.
+func (lc Lifecycle) Clone() Lifecycle {
+	lcCopy := lc
+	if lc.ExpireIgnoreReplication != nil {
+		expVal := *lc.ExpireIgnoreReplication
+		lcCopy.ExpireIgnoreReplication = &expVal
+	}
+	return lcCopy
+}
+
 // HasExpiry returns 'true' if lifecycle document has Expiry enabled.
 func (lc Lifecycle) HasExpiry() bool {
 	for _, rule := range lc.Rules {

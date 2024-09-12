@@ -1253,8 +1253,23 @@ func evalActionFromLifecycle(ctx context.Context, lc lifecycle.Lifecycle, lr loc
 			}
 			return lifecycle.Event{Action: lifecycle.NoneAction}
 		}
-		if rcfg != nil && !obj.VersionPurgeStatus.Empty() && rcfg.HasActiveRules(obj.Name, true) {
-			return lifecycle.Event{Action: lifecycle.NoneAction}
+
+		if rcfg != nil && rcfg.HasActiveRules(obj.Name, true) {
+			expiryIgnoreRepl := "on"
+			if lc.ExpireIgnoreReplication != nil {
+				expiryIgnoreRepl = *lc.ExpireIgnoreReplication
+			}
+			switch expiryIgnoreRepl {
+			case "on":
+				if !obj.VersionPurgeStatus.Empty() { // for backward compatibility
+					return lifecycle.Event{Action: lifecycle.NoneAction}
+				}
+			case "off":
+				if !obj.VersionPurgeStatus.Empty() || obj.ReplicationStatus != replication.Completed {
+					return lifecycle.Event{Action: lifecycle.NoneAction}
+				}
+			}
+			return event
 		}
 	}
 

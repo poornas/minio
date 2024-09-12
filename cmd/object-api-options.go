@@ -367,16 +367,13 @@ func putOpts(ctx context.Context, bucket, object, vid string, hdrs http.Header, 
 
 func putOptsFromHeaders(ctx context.Context, hdr http.Header, metadata map[string]string) (opts ObjectOptions, err error) {
 	mtimeStr := strings.TrimSpace(hdr.Get(xhttp.MinIOSourceMTime))
-	fmt.Println("mtimeStr", mtimeStr, hdr)
 	var mtime time.Time
 	if mtimeStr != "" {
 		mtime, err = time.Parse(time.RFC3339Nano, mtimeStr)
-		fmt.Println("mtime", mtime, err)
 		if err != nil {
 			return opts, fmt.Errorf("Unable to parse %s, failed with %w", xhttp.MinIOSourceMTime, err)
 		}
 	}
-	fmt.Println("mtime", mtime)
 	retaintimeStr := strings.TrimSpace(hdr.Get(xhttp.MinIOSourceObjectRetentionTimestamp))
 	var retaintimestmp time.Time
 	if retaintimeStr != "" {
@@ -422,8 +419,6 @@ func putOptsFromHeaders(ctx context.Context, hdr http.Header, metadata map[strin
 		if err != nil {
 			return ObjectOptions{}, err
 		}
-		fmt.Println("early retur1n...")
-
 		return ObjectOptions{
 			ServerSideEncryption: sseKms,
 			UserDefined:          metadata,
@@ -435,7 +430,6 @@ func putOptsFromHeaders(ctx context.Context, hdr http.Header, metadata map[strin
 	// default case of passing encryption headers and UserDefined metadata to backend
 	opts, err = getDefaultOpts(hdr, false, metadata)
 	if err != nil {
-		fmt.Println("early return...")
 		return opts, err
 	}
 

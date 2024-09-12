@@ -19,7 +19,6 @@ package cmd
 
 import (
 	"encoding/xml"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -58,8 +57,7 @@ func (api objectAPIHandlers) PutBucketLifecycleHandler(w http.ResponseWriter, r 
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentMD5), r.URL)
 		return
 	}
-	var expireIgnoreRepl = r.Header.Get(xhttp.MinioLifecycleExpiryIgnoreReplication)
-	fmt.Println("expiry ignore repl.header....", expireIgnoreRepl)
+	expireIgnoreRepl := r.Header.Get(xhttp.MinioLifecycleExpiryIgnoreReplication)
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutBucketLifecycleAction, bucket, ""); s3Error != ErrNone {
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
 		return
@@ -74,11 +72,9 @@ func (api objectAPIHandlers) PutBucketLifecycleHandler(w http.ResponseWriter, r 
 
 	bucketLifecycle, err := lifecycle.ParseLifecycleConfigWithID(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
-		fmt.Println("error parsing lifecycle config....", err)
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
-	fmt.Println("bucket lifecycle config....", bucketLifecycle)
 
 	// Validate the received bucket policy document
 	if err = bucketLifecycle.Validate(rcfg); err != nil {
@@ -100,7 +96,6 @@ func (api objectAPIHandlers) PutBucketLifecycleHandler(w http.ResponseWriter, r 
 
 	// Get list of rules for the bucket from disk
 	meta, err := globalBucketMetadataSys.GetConfigFromDisk(ctx, bucket)
-	fmt.Println("meta config from disk....", meta)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
@@ -122,29 +117,22 @@ func (api objectAPIHandlers) PutBucketLifecycleHandler(w http.ResponseWriter, r 
 			}
 		}
 	}
-	fmt.Println("lfc config from disk....", meta.LifecycleConfigXML)
 
 	if bucketLifecycle.HasExpiry() || expiryRuleRemoved {
 		currtime := time.Now()
 		bucketLifecycle.ExpiryUpdatedAt = &currtime
 	}
 	bucketLifecycle.ExpireIgnoreReplication = &expireIgnoreRepl
-	fmt.Println("updated expiry ignore repl.....to ,,,", expireIgnoreRepl)
 	configData, err := xml.Marshal(bucketLifecycle)
-	fmt.Println("marshal xml from lfc ,,,", err, string(configData))
-
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
 	if _, err = globalBucketMetadataSys.Update(ctx, bucket, bucketLifecycleConfig, configData); err != nil {
-		fmt.Println("update metadata xml from lfc ,,,", err, string(configData))
-
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
-	fmt.Println("SET:update metadata xml from lfc ,,,", err, string(configData))
 	// Success.
 	writeSuccessResponseHeadersOnly(w)
 }
@@ -190,17 +178,16 @@ func (api objectAPIHandlers) GetBucketLifecycleHandler(w http.ResponseWriter, r 
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
-	fmt.Println("GET:update metadata xml from lfc ,,,", err, config.ExpireIgnoreReplication, config)
-
+	cloned := config.Clone()
 	// explicitly set ExpiryUpdatedAt nil as its meant for internal consumption only
-	config.ExpiryUpdatedAt = nil
+	cloned.ExpiryUpdatedAt = nil
 	expIgnoreRepl := ""
-	if config.ExpireIgnoreReplication != nil {
-		expIgnoreRepl = *config.ExpireIgnoreReplication
-		// explicitly set ExpiryIgnoreReplication nil as its meant for internal consumption only
-		config.ExpireIgnoreReplication = nil
+	if cloned.ExpireIgnoreReplication != nil {
+		expIgnoreRepl = *cloned.ExpireIgnoreReplication
+		// explicitly set ExpiryIgnoreReplication nil and pass this instead as a header in response
+		cloned.ExpireIgnoreReplication = nil
 	}
-	configData, err := xml.Marshal(config)
+	configData, err := xml.Marshal(cloned)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
@@ -210,7 +197,7 @@ func (api objectAPIHandlers) GetBucketLifecycleHandler(w http.ResponseWriter, r 
 		w.Header().Set(xhttp.MinIOLifecycleCfgUpdatedAt, updatedAt.Format(iso8601Format))
 	}
 	if expIgnoreRepl != "" {
-		w.Header().Set(xhttp.MinioLifecycleExpiryIgnoreReplication, expIgnoreRepl)
+		w.Header().Set(xhttp.MinioLifecycleExpiryIgnoreReplication, *cloned.ExpireIgnoreReplication)
 	}
 	// Write lifecycle configuration to client.
 	writeSuccessResponseXML(w, configData)

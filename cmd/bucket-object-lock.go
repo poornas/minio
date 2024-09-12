@@ -268,9 +268,9 @@ func checkPutObjectLockAllowed(ctx context.Context, rq *http.Request, bucket, ob
 	if err != nil {
 		return mode, retainDate, legalHold, toAPIErrorCode(ctx, err)
 	}
-
-	replica := (rq.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.Replica.String() || rq.Header.Get(xhttp.AmzBucketReplicationStatus) == replication.ReplicaEdge.String())
-
+	replStatus, ok := rq.Header[xhttp.AmzBucketReplicationStatus]
+	// if the object is a replica or edge replica, it should inherit retention metadata from source
+	replica := (replStatus[0] == replication.Replica.String() || (ok && replStatus[0] == ""))
 	if opts.VersionID != "" && !replica {
 		if objInfo, err := getObjectInfoFn(ctx, bucket, object, opts); err == nil {
 			r := objectlock.GetObjectRetentionMeta(objInfo.UserDefined)

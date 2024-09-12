@@ -267,7 +267,7 @@ func mustReplicate(ctx context.Context, bucket, object string, mopts mustReplica
 		return
 	}
 
-	if mopts.replicationRequest { // incoming replication request on target cluster
+	if mopts.replicationRequest && replStatus != "" { // incoming replication request on target cluster
 		return
 	}
 
@@ -344,14 +344,15 @@ func isStandardHeader(matchHeaderKey string) bool {
 }
 
 // returns whether object version is a deletemarker and if object qualifies for replication
-func checkReplicateDelete(ctx context.Context, bucket string, dobj ObjectToDelete, oi ObjectInfo, delOpts ObjectOptions, gerr error) (dsc ReplicateDecision) {
+func checkReplicateDelete(ctx context.Context, bucket string, dobj ObjectToDelete, oi ObjectInfo, delOpts ObjectOptions, replHdrStatus string, gerr error) (dsc ReplicateDecision) {
 	rcfg, err := getReplicationConfig(ctx, bucket)
 	if err != nil || rcfg == nil {
 		replLogOnceIf(ctx, err, bucket)
 		return
 	}
-	// If incoming request is a replication request, it does not need to be re-replicated.
-	if delOpts.ReplicationRequest {
+	// If incoming request is a replication request, it does not need to be re-replicated. On the other hand,
+	// if it is received from an edge site, evaluate the replication rules.
+	if delOpts.ReplicationRequest && replHdrStatus == replication.Replica.String() {
 		return
 	}
 	// Skip replication if this object's prefix is excluded from being
@@ -367,6 +368,14 @@ func checkReplicateDelete(ctx context.Context, bucket string, dobj ObjectToDelet
 		VersionID:    dobj.VersionID,
 		OpType:       replication.DeleteReplicationType,
 	}
+
+	// if cluster is receiving a delete marker replication request from edge, unset version id
+	// to evaluate replication rules.This is so as to allow the delete marker to be replicated
+	// if rules permit
+	if delOpts.ReplicationRequest && replHdrStatus == "" && delOpts.DeleteMarker {
+		opts.VersionID = ""
+	}
+
 	tgtArns := rcfg.FilterTargetArns(opts)
 	dsc.targetsMap = make(map[string]replicateTargetDecision, len(tgtArns))
 	if len(tgtArns) == 0 {
@@ -684,7 +693,7 @@ func replicateDeleteToTarget(ctx context.Context, dobj DeletedObjectReplicationI
 	}
 	status := minio.ReplicationStatusReplica
 	if tgt.edge { // if edge replication, set replication status as edge
-		status = minio.ReplicationStatusReplicaEdge
+		status = minio.ReplicationStatus("")
 	}
 	rmErr := tgt.RemoveObject(ctx, tgt.Bucket, dobj.ObjectName, minio.RemoveObjectOptions{
 		VersionID: versionID,
@@ -692,7 +701,7 @@ func replicateDeleteToTarget(ctx context.Context, dobj DeletedObjectReplicationI
 			ReplicationDeleteMarker: dobj.DeleteMarkerVersionID != "",
 			ReplicationMTime:        dobj.DeleteMarkerMTime.Time,
 			ReplicationStatus:       status,
-			ReplicationRequest:      true // always set this to distinguish between `mc mirror` and replication
+			ReplicationRequest:      true, // always set this to distinguish between `mc mirror` and replication
 		},
 	})
 	if rmErr != nil {
@@ -756,7 +765,7 @@ func getCopyObjMetadata(oi ObjectInfo, sc string, edge bool) map[string]string {
 	meta[xhttp.MinIOSourceETag] = oi.ETag
 	meta[xhttp.MinIOSourceMTime] = oi.ModTime.UTC().Format(time.RFC3339Nano)
 	if edge {
-		meta[xhttp.AmzBucketReplicationStatus] = replication.ReplicaEdge.String()
+		meta[xhttp.AmzBucketReplicationStatus] = ""
 	} else {
 		meta[xhttp.AmzBucketReplicationStatus] = replication.Replica.String()
 	}
@@ -1185,7 +1194,6 @@ func (ri ReplicateObjectInfo) replicateObject(ctx context.Context, objectAPI Obj
 	startTime := time.Now()
 	bucket := ri.Bucket
 	object := ri.Name
-
 	rAction := replicateAll
 	rinfo = replicatedTargetInfo{
 		Size:                  ri.ActualSize,
@@ -1244,7 +1252,6 @@ func (ri ReplicateObjectInfo) replicateObject(ctx context.Context, objectAPI Obj
 
 	// make sure we have the latest metadata for metrics calculation
 	rinfo.PrevReplicationStatus = objInfo.TargetReplicationStatus(tgt.ARN)
-
 	// Set the encrypted size for SSE-C objects
 	var size int64
 	if crypto.SSEC.IsEncrypted(objInfo.UserDefined) {
@@ -1351,7 +1358,6 @@ func (ri ReplicateObjectInfo) replicateAll(ctx context.Context, objectAPI Object
 	// replication action can only be determined after stat on remote. This default is
 	// needed for updating replication metrics correctly when target is offline.
 	rAction := replicateMetadata
-
 	rinfo = replicatedTargetInfo{
 		Size:                  ri.ActualSize,
 		Arn:                   tgt.ARN,

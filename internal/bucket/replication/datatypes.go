@@ -40,9 +40,6 @@ const (
 
 	// Replica - this is a replica.
 	Replica StatusType = "REPLICA"
-
-	//ReplicaEdge - this is a replica from edge cluster
-	ReplicaEdge StatusType = "REPLICA_EDGE"
 )
 
 // String returns string representation of status

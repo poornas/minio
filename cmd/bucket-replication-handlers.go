@@ -287,7 +287,6 @@ func (api objectAPIHandlers) GetBucketReplicationMetricsV2Handler(w http.Respons
 
 	enc := json.NewEncoder(w)
 	stats := globalReplicationStats.Load().getLatestReplicationStats(bucket)
-	fmt.Println("statts>", stats.ReplicationStats)
 	bwRpt := globalNotificationSys.GetBandwidthReports(ctx, bucket)
 	bwMap := bwRpt.BucketStats
 	for arn, st := range stats.ReplicationStats.Stats {
